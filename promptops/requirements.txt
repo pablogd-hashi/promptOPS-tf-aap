@@ -1,0 +1,13 @@
+# PromptOps Service Dependencies
+#
+# This service has minimal dependencies by design.
+# It only needs the OpenAI SDK to call GPT-4.
+#
+# It explicitly does NOT include:
+# - google-cloud-* (no GCP access)
+# - boto3 (no AWS access)
+# - ansible (no Ansible execution)
+# - subprocess wrappers (no shell execution)
+
+openai>=1.0.0
+streamlit>=1.30.0

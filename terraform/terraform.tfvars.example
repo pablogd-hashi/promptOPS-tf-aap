@@ -1,0 +1,49 @@
+# PromptOps Demo - Terraform Variables
+#
+# Copy this file to terraform.tfvars and fill in your values.
+# Or let PromptOps generate it via the web UI.
+#
+# Note: Many values have platform constraints enforced by modules.
+# The LLM is aware of these constraints and will refuse invalid requests.
+
+# -----------------------------------------------------------------------------
+# Project (required - you must provide these)
+# -----------------------------------------------------------------------------
+
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+zone       = "us-central1-a"
+
+# -----------------------------------------------------------------------------
+# Compute (platform-constrained)
+# -----------------------------------------------------------------------------
+
+instance_name    = "gpu-worker-01"
+machine_type     = "n1-standard-4"   # ALLOWED: n1-standard-4, n1-standard-8
+gpu_type         = "nvidia-tesla-t4" # ALLOWED: nvidia-tesla-t4 only
+gpu_count        = 1                 # ALLOWED: 1-2
+disk_size_gb     = 100               # ALLOWED: 50-200
+enable_public_ip = true
+
+# -----------------------------------------------------------------------------
+# Network Policy (platform-constrained)
+# -----------------------------------------------------------------------------
+
+allow_ssh       = true   # Port 22 - required for Ansible
+allow_streamlit = false  # Port 8501 - the ONLY app port available
+
+# -----------------------------------------------------------------------------
+# Encryption Policy
+# -----------------------------------------------------------------------------
+
+boot_disk_encrypted = false  # Enable CMEK encryption
+
+# -----------------------------------------------------------------------------
+# AAP Configuration (required - you must provide these)
+# -----------------------------------------------------------------------------
+
+aap_host            = "https://your-aap.example.com"
+aap_username        = "admin"
+aap_password        = "your-password"
+aap_job_template_id = 42
+ssh_user            = "ubuntu"

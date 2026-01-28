@@ -1,0 +1,164 @@
+version: '3'
+
+# PromptOps Demo
+#
+# Quick start:
+#   task setup   - One-time setup
+#   task web     - Open browser UI
+#
+# Or use CLI:
+#   task plan    - Validate configuration
+#   task apply   - Create infrastructure (Terraform + AAP)
+#   task destroy - Clean up when done
+
+vars:
+  TF_DIR: "{{.ROOT_DIR}}/terraform"
+
+tasks:
+  default:
+    desc: "Show available commands"
+    silent: true
+    cmds:
+      - |
+        echo ""
+        echo "PromptOps Demo"
+        echo "=============="
+        echo ""
+        echo "Quick Start:"
+        echo "  task setup     One-time setup"
+        echo "  task web       Open browser UI (recommended)"
+        echo ""
+        echo "Workflow:"
+        echo "  task plan      Validate Terraform configuration"
+        echo "  task apply     Create infrastructure + trigger AAP"
+        echo "  task destroy   Delete infrastructure when done"
+        echo ""
+        echo "Helpers:"
+        echo "  task status    Check environment"
+        echo "  task ssh       SSH to instance"
+        echo "  task outputs   Show Terraform outputs"
+        echo ""
+
+  # === MAIN WORKFLOW ===
+
+  web:
+    desc: "Open PromptOps in browser (recommended for demos)"
+    dir: "{{.ROOT_DIR}}/promptops"
+    cmds:
+      - |
+        if [ -z "$OPENAI_API_KEY" ] && [ "$PROMPTOPS_LOCAL" != "true" ]; then
+          echo "Error: OPENAI_API_KEY not set"
+          echo "Run: export OPENAI_API_KEY='sk-...'"
+          echo "Or:  export PROMPTOPS_LOCAL=true  (for local Ollama)"
+          exit 1
+        fi
+        if [ ! -d ".venv" ]; then
+          echo "Run 'task setup' first"
+          exit 1
+        fi
+      - .venv/bin/streamlit run web.py --server.headless=false
+
+  plan:
+    desc: "Run Terraform plan (validates configuration)"
+    dir: "{{.TF_DIR}}"
+    cmds:
+      - terraform plan
+
+  apply:
+    desc: "Create infrastructure on GCP and trigger AAP"
+    dir: "{{.TF_DIR}}"
+    interactive: true
+    cmds:
+      - |
+        echo "This will:"
+        echo "  1. Create GPU VM on GCP"
+        echo "  2. Trigger AAP to configure the VM"
+        echo ""
+      - terraform apply
+
+  destroy:
+    desc: "Destroy all infrastructure"
+    dir: "{{.TF_DIR}}"
+    interactive: true
+    cmds:
+      - terraform destroy
+
+  # === SETUP ===
+
+  setup:
+    desc: "One-time setup - install dependencies and initialize Terraform"
+    cmds:
+      - task: status
+      - |
+        echo ""
+        echo "Setting up Python environment..."
+        cd {{.ROOT_DIR}}/promptops
+        python3 -m venv .venv
+        .venv/bin/pip install -q -r requirements.txt
+        echo "✓ Python dependencies installed"
+      - |
+        echo ""
+        echo "Initializing Terraform..."
+        cd {{.TF_DIR}}
+        terraform init
+        echo "✓ Terraform initialized"
+      - |
+        echo ""
+        echo "Setup complete!"
+        echo ""
+        echo "Next steps:"
+        echo "  1. Set your GCP project: gcloud config set project YOUR_PROJECT"
+        echo "  2. Create terraform.tfvars with your settings"
+        echo "  3. Run: task web"
+
+  status:
+    desc: "Check environment configuration"
+    silent: true
+    cmds:
+      - |
+        echo ""
+        echo "Environment Status"
+        echo "=================="
+        echo ""
+
+        # Check tools
+        command -v python3 >/dev/null && echo "✓ python3" || echo "✗ python3 not found"
+        command -v terraform >/dev/null && echo "✓ terraform $(terraform version -json | python3 -c 'import json,sys;print(json.load(sys.stdin)["terraform_version"])' 2>/dev/null || echo '')" || echo "✗ terraform not found"
+        command -v gcloud >/dev/null && echo "✓ gcloud" || echo "✗ gcloud not found"
+
+        echo ""
+
+        # Check credentials
+        [ "$PROMPTOPS_LOCAL" = "true" ] && echo "✓ Using local model (Ollama)" || { [ -n "$OPENAI_API_KEY" ] && echo "✓ OPENAI_API_KEY set" || echo "✗ OPENAI_API_KEY not set (or set PROMPTOPS_LOCAL=true)"; }
+
+        # Check GCP
+        PROJECT=$(gcloud config get-value project 2>/dev/null)
+        [ -n "$PROJECT" ] && echo "✓ GCP project: $PROJECT" || echo "✗ GCP project not set"
+
+        echo ""
+
+  # === HELPERS ===
+
+  outputs:
+    desc: "Show Terraform outputs"
+    dir: "{{.TF_DIR}}"
+    cmds:
+      - terraform output
+
+  ssh:
+    desc: "SSH to the GPU instance"
+    dir: "{{.TF_DIR}}"
+    interactive: true
+    cmds:
+      - |
+        INSTANCE=$(terraform output -raw instance_name 2>/dev/null)
+        ZONE=$(terraform output -raw zone 2>/dev/null)
+        PROJECT=$(terraform output -raw project_id 2>/dev/null || gcloud config get-value project)
+        [ -z "$INSTANCE" ] && echo "No instance found. Run 'task apply' first." && exit 1
+        gcloud compute ssh "$INSTANCE" --zone="$ZONE" --project="$PROJECT"
+
+  clean:
+    desc: "Remove generated terraform.tfvars"
+    cmds:
+      - rm -f {{.TF_DIR}}/terraform.tfvars
+      - echo "Cleaned terraform.tfvars"

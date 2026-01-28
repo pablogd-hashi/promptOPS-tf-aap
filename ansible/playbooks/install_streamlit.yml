@@ -1,0 +1,313 @@
+---
+# Install Streamlit Demo App
+#
+# Triggered by Terraform via the AAP provider after VM creation.
+# Uses Vault SSH CA for ephemeral SSH credentials — no static keys stored.
+#
+# Three-play structure:
+#   Play 1 (localhost) - Authenticate to Vault, issue SSH key + signed cert
+#   Play 2 (target)    - SSH into VM using Vault creds, install Streamlit
+#   Play 3 (localhost) - Shred ephemeral SSH credentials
+#
+# Variable sources:
+#   From Terraform extra_vars:
+#     - target_host             VM IP address
+#     - ssh_user                SSH username (default: ubuntu)
+#     - vault_addr              Vault server URL
+#     - vault_namespace         Vault Enterprise namespace (empty for OSS)
+#     - vault_ssh_role          Vault SSH CA role name
+#
+#   From AAP Vault credential lookup (injected by Job Template):
+#     - vault_approle_role_id   AppRole role ID
+#     - vault_approle_secret_id AppRole secret ID
+#
+# Prerequisites:
+#   - Vault SSH CA enabled (vault secrets enable ssh)
+#   - Vault SSH role created (vault write ssh/roles/<name> ...)
+#   - Vault AppRole configured with policy allowing ssh/issue/*
+#   - AAP Job Template has Vault credential lookup attached
+#   - VM startup script trusts the Vault CA public key (done by Terraform)
+
+# ---------------------------------------------------------------------------
+# Play 1: Obtain ephemeral SSH credentials from Vault
+# ---------------------------------------------------------------------------
+# Runs on localhost (AAP execution environment). Authenticates to Vault using
+# AppRole, then calls POST /ssh/issue/:role to get a private key and a
+# signed certificate. These are written to a temp directory and passed to
+# Play 2 via add_host variables.
+
+- name: Obtain SSH credentials from Vault
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars:
+    # Unique temp dir per target host to avoid collisions in parallel runs
+    _ssh_key_dir: "/tmp/vault-ssh-{{ target_host | hash('md5') }}"
+
+  tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - target_host is defined
+          - target_host | length > 0
+          - vault_addr is defined
+          - vault_approle_role_id is defined
+          - vault_approle_secret_id is defined
+          - vault_ssh_role is defined
+        fail_msg: >-
+          Missing required variables. Ensure Terraform passes target_host,
+          vault_addr, vault_ssh_role via extra_vars, and AAP injects
+          vault_approle_role_id + vault_approle_secret_id via credential lookup.
+
+    - name: Create temporary directory for SSH credentials
+      ansible.builtin.file:
+        path: "{{ _ssh_key_dir }}"
+        state: directory
+        mode: "0700"
+
+    # Build Vault headers. X-Vault-Namespace is required for Vault Enterprise;
+    # omitted (empty) for OSS Vault, which ignores unknown headers.
+    - name: Set Vault namespace header
+      ansible.builtin.set_fact:
+        _vault_headers: "{{ {'X-Vault-Namespace': vault_namespace} if vault_namespace | default('') | length > 0 else {} }}"
+
+    # Step 1: Exchange AppRole role_id + secret_id for a Vault client token.
+    # The token is short-lived and scoped to the policy attached to the AppRole.
+    - name: Authenticate to Vault via AppRole
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/auth/approle/login"
+        method: POST
+        headers: "{{ _vault_headers }}"
+        body_format: json
+        body:
+          role_id: "{{ vault_approle_role_id }}"
+          secret_id: "{{ vault_approle_secret_id }}"
+        status_code: 200
+      register: vault_login
+      no_log: true
+
+    # Step 2: Issue an ephemeral SSH key pair + signed certificate.
+    # Vault generates the private key and signs the public key in one call.
+    # The cert is valid for the TTL configured on the Vault SSH role.
+    - name: Issue SSH credentials from Vault
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/ssh/issue/{{ vault_ssh_role }}"
+        method: POST
+        headers: "{{ _vault_headers | combine({'X-Vault-Token': vault_login.json.auth.client_token}) }}"
+        body_format: json
+        body:
+          key_type: "ca"
+          username: "{{ ssh_user | default('ubuntu') }}"
+        status_code: 200
+      register: vault_ssh
+      no_log: true
+
+    # Write credentials to disk so SSH can use them (OpenSSH needs file paths)
+    - name: Write private key
+      ansible.builtin.copy:
+        content: "{{ vault_ssh.json.data.private_key }}"
+        dest: "{{ _ssh_key_dir }}/id_rsa"
+        mode: "0600"
+      no_log: true
+
+    - name: Write signed certificate
+      ansible.builtin.copy:
+        content: "{{ vault_ssh.json.data.signed_key }}"
+        dest: "{{ _ssh_key_dir }}/id_rsa-cert.pub"
+        mode: "0644"
+      no_log: true
+
+    # Inject the target VM into Ansible's in-memory inventory with the
+    # Vault-issued credentials. Play 2 connects using these SSH settings.
+    # CertificateFile is specified explicitly to ensure compatibility across
+    # all OpenSSH versions (some older versions don't auto-detect certs).
+    - name: Add target host to in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ target_host }}"
+        groups: target
+        ansible_host: "{{ target_host }}"
+        ansible_user: "{{ ssh_user | default('ubuntu') }}"
+        ansible_ssh_private_key_file: "{{ _ssh_key_dir }}/id_rsa"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o CertificateFile={{ _ssh_key_dir }}/id_rsa-cert.pub"
+        _ssh_key_dir: "{{ _ssh_key_dir }}"
+
+# ---------------------------------------------------------------------------
+# Play 2: Install and configure the Streamlit demo app
+# ---------------------------------------------------------------------------
+# Connects to the target VM using the Vault-issued SSH credentials from Play 1.
+# gather_facts is false because the VM may still be booting — we wait for SSH
+# first, then gather facts explicitly.
+
+- name: Install Streamlit demo app
+  hosts: target
+  become: true
+  gather_facts: false
+
+  vars:
+    app_dir: /opt/streamlit-demo
+    app_port: 8501
+
+  tasks:
+    - name: Wait for SSH to become available
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Gather facts after SSH is ready
+      ansible.builtin.setup:
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install Python and pip
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+        state: present
+
+    - name: Create app directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create Python virtual environment
+      ansible.builtin.command:
+        cmd: python3 -m venv {{ app_dir }}/venv
+        creates: "{{ app_dir }}/venv/bin/python"
+
+    - name: Install Streamlit in virtual environment
+      ansible.builtin.pip:
+        name: streamlit
+        virtualenv: "{{ app_dir }}/venv"
+        state: present
+
+    - name: Create Streamlit demo app
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/app.py"
+        mode: "0644"
+        content: |
+          """
+          PromptOps Demo - deployed by Ansible Automation Platform
+          """
+          import streamlit as st
+          import socket
+          import platform
+          from datetime import datetime
+
+          st.set_page_config(
+              page_title="PromptOps Demo",
+              layout="centered"
+          )
+
+          st.title("PromptOps Demo")
+          st.write("Deployed by Ansible Automation Platform.")
+
+          st.markdown("---")
+
+          st.subheader("Instance Details")
+
+          col1, col2, col3 = st.columns(3)
+          col1.metric("Hostname", socket.gethostname())
+          col2.metric("Time", datetime.now().strftime("%H:%M:%S"))
+          col3.metric("OS", platform.system())
+
+          st.markdown("---")
+
+          st.subheader("How this was provisioned")
+
+          st.markdown("""
+          | Step | Tool | What happened |
+          |------|------|--------------|
+          | 1 | PromptOps | User described infrastructure needs |
+          | 2 | LLM | Generated `terraform.tfvars` from intent |
+          | 3 | Terraform | Created this VM on GCP |
+          | 4 | Terraform Action | Triggered AAP job via provider |
+          | 5 | AAP | Ran playbook, installed this app |
+          """)
+
+          st.markdown("---")
+
+          st.subheader("Architecture")
+
+          st.markdown("""
+          - **LLM**: Reasons about infrastructure, writes config. No cloud access.
+          - **Terraform**: Provisions infrastructure. Triggers AAP via Actions.
+          - **AAP**: Configures VMs. Runs playbooks over SSH.
+          - **Human**: Approves every step.
+          """)
+
+          st.caption("PromptOps / Terraform / AAP")
+
+    - name: Create systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/streamlit-demo.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Streamlit Demo App
+          After=network.target
+
+          [Service]
+          Type=simple
+          WorkingDirectory={{ app_dir }}
+          ExecStart={{ app_dir }}/venv/bin/streamlit run app.py --server.port={{ app_port }} --server.address=0.0.0.0 --server.headless=true
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Start and enable Streamlit service
+      ansible.builtin.systemd:
+        name: streamlit-demo
+        state: started
+        enabled: true
+
+    - name: Wait for Streamlit to start
+      ansible.builtin.wait_for:
+        port: "{{ app_port }}"
+        timeout: 60
+
+    - name: Display success message
+      ansible.builtin.debug:
+        msg: |
+
+          ============================================
+          Streamlit Demo App Installed!
+          ============================================
+
+          Access at: http://{{ target_host }}:{{ app_port }}
+
+          ============================================
+
+# ---------------------------------------------------------------------------
+# Play 3: Clean up ephemeral SSH credentials
+# ---------------------------------------------------------------------------
+# Securely removes the Vault-issued private key and certificate.
+# shred overwrites the file before deletion to prevent recovery.
+# This runs even if Play 2 fails (always runs as a separate play).
+
+- name: Clean up ephemeral SSH credentials
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: Shred private key
+      ansible.builtin.command:
+        cmd: shred -u {{ hostvars[groups['target'][0]]['_ssh_key_dir'] }}/id_rsa
+      ignore_errors: true
+
+    - name: Remove SSH credential directory
+      ansible.builtin.file:
+        path: "{{ hostvars[groups['target'][0]]['_ssh_key_dir'] }}"
+        state: absent

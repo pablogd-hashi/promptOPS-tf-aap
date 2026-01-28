@@ -1,0 +1,52 @@
+Analyze the following infrastructure request and generate appropriate Terraform variable values for GPU infrastructure on GCP.
+
+PROCESS:
+
+1. Understand the request
+   - What is the workload type? (ML training, inference, rendering, compute)
+   - Are there specific GPU requirements?
+   - Are there performance or cost constraints?
+   - Is this for development, staging, or production?
+
+2. Ask clarifying questions if needed
+   - If GPU type is not specified, ask what the workload is
+   - If machine type is not specified, suggest appropriate options
+   - If region is not specified, suggest based on GPU availability
+
+3. Select appropriate GPU configuration
+   - T4: Cost-effective, good for inference and light training
+   - V100: High performance, expensive, good for heavy ML training
+   - A100: Highest performance, very expensive, cutting-edge ML
+   - P100: Older generation, still capable for many workloads
+   - P4: Inference optimized, cost-effective
+
+4. Select appropriate machine type
+   - Match CPU/memory to GPU requirements
+   - n1-standard-4: 4 vCPU, 15 GB RAM (good for 1-2 T4s)
+   - n1-standard-8: 8 vCPU, 30 GB RAM (good for 2-4 T4s or 1 V100)
+   - n1-standard-16: 16 vCPU, 60 GB RAM (good for 4+ GPUs)
+   - a2-highgpu-1g: 12 vCPU, 85 GB RAM, optimized for A100
+
+5. Consider availability
+   - Not all GPU types are available in all regions
+   - us-central1: Good availability for T4, V100
+   - us-west1: Good availability
+   - Check GCP GPU availability docs if unsure
+
+6. Generate the JSON configuration block
+   - Use realistic values
+   - Include all required variables
+   - Set sensible defaults for optional parameters
+
+7. Explain your reasoning
+   - Why this GPU type?
+   - Why this machine type?
+   - What are the cost implications? (rough estimate)
+   - What are the performance expectations?
+
+8. Provide next steps
+   - Remind user to review terraform.tfvars
+   - Suggest running speculative plan
+   - Note that they must manually execute with terraform apply
+
+Remember: You are generating configuration values, not executing anything. Be helpful, be clear, and respect the privilege boundaries.

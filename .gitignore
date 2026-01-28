@@ -1,0 +1,75 @@
+# PromptOps Demo - Git Ignore
+
+# PDF files
+*pdf
+
+# Backup files
+~*
+*~
+
+# Generated plan files (ephemeral artifacts)
+plans/intent/*.md
+plans/speculative/*.txt
+plans/actions/*.log
+
+# Keep README files in plans directories
+!plans/*/README.md
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+terraform.tfstate
+terraform.tfstate.backup
+*.tfplan
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/*.tfplan
+
+# Ansible
+ansible/**/*.retry
+ansible/.ansible/
+.vault_pass
+
+# Python
+promptops/__pycache__/
+promptops/**/*.pyc
+promptops/.venv/
+promptops/venv/
+promptops/**/*.egg-info/
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# AI assistants
+.claude/
+.cursor/
+.aider*
+.continue/
+.codeium/
+.copilot/
+
+# Credentials and secrets (NEVER COMMIT)
+*.pem
+*.key
+*_key.json
+.env
+.env.local
+secrets/
+credentials/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
