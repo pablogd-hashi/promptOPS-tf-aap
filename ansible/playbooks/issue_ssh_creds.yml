@@ -26,7 +26,7 @@
       username: "{{ ssh_user | default('ubuntu') }}"
     status_code: 200
   register: vault_ssh
-  no_log: true
+  no_log: false  # TEMP: debugging Vault SSH issue error
 
 # Write credentials to disk so SSH can use them (OpenSSH needs file paths)
 - name: "Write private key for {{ target_ip }}"
