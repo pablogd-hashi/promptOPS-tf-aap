@@ -1,6 +1,6 @@
 # Terraform Providers
 #
-# Required providers for GCP infrastructure and AAP integration.
+# Required providers for GCP infrastructure, AAP integration, and Vault SSH CA.
 
 terraform {
   required_version = ">= 1.14.0"
@@ -13,9 +13,9 @@ terraform {
     aap = {
       source = "ansible/aap"
     }
-    http = {
-      source  = "hashicorp/http"
-      version = "~> 3.0"
+    vault = {
+      source  = "hashicorp/vault"
+      version = "~> 4.0"
     }
   }
 }
@@ -34,4 +34,14 @@ provider "aap" {
 
   # Skip TLS verification for demo (use proper certs in production)
   insecure_skip_verify = true
+}
+
+# Vault Provider - manages SSH CA and AppRole
+provider "vault" {
+  address   = var.vault_addr
+  token     = var.vault_token
+  namespace = var.vault_namespace != "" ? var.vault_namespace : null
+
+  # Skip TLS verification for demo (use proper certs in production)
+  skip_tls_verify = true
 }

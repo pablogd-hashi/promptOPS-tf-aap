@@ -7,7 +7,7 @@
 # The LLM is aware of these constraints and will refuse invalid requests.
 
 # -----------------------------------------------------------------------------
-# Project (required - you must provide these)
+# GCP Project (required)
 # -----------------------------------------------------------------------------
 
 project_id = "your-gcp-project-id"
@@ -18,7 +18,8 @@ zone       = "us-central1-a"
 # Compute (platform-constrained)
 # -----------------------------------------------------------------------------
 
-instance_name    = "gpu-worker-01"
+vm_count         = 1                 # ALLOWED: 1-10
+instance_name    = "gpu-worker"      # Base name, suffixed with index if vm_count > 1
 machine_type     = "n1-standard-4"   # ALLOWED: n1-standard-4, n1-standard-8
 gpu_type         = "nvidia-tesla-t4" # ALLOWED: nvidia-tesla-t4 only
 gpu_count        = 1                 # ALLOWED: 1-2
@@ -30,7 +31,7 @@ enable_public_ip = true
 # -----------------------------------------------------------------------------
 
 allow_ssh       = true   # Port 22 - required for Ansible
-allow_streamlit = false  # Port 8501 - the ONLY app port available
+allow_streamlit = true   # Port 8501 - the ONLY app port available
 
 # -----------------------------------------------------------------------------
 # Encryption Policy
@@ -39,7 +40,7 @@ allow_streamlit = false  # Port 8501 - the ONLY app port available
 boot_disk_encrypted = false  # Enable CMEK encryption
 
 # -----------------------------------------------------------------------------
-# AAP Configuration (required - you must provide these)
+# AAP Configuration (required)
 # -----------------------------------------------------------------------------
 
 aap_host            = "https://your-aap.example.com"
@@ -47,3 +48,11 @@ aap_username        = "admin"
 aap_password        = "your-password"
 aap_job_template_id = 42
 ssh_user            = "ubuntu"
+
+# -----------------------------------------------------------------------------
+# Vault Configuration (required)
+# -----------------------------------------------------------------------------
+
+vault_addr      = "https://your-vault.example.com:8200"
+vault_token     = "hvs.your-vault-token"
+vault_namespace = "admin"  # Leave empty for OSS Vault

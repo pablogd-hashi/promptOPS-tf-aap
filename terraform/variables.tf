@@ -135,7 +135,7 @@ variable "ssh_user" {
 }
 
 # -----------------------------------------------------------------------------
-# Vault SSH CA Configuration
+# Vault Configuration
 # -----------------------------------------------------------------------------
 
 variable "vault_addr" {
@@ -143,14 +143,14 @@ variable "vault_addr" {
   type        = string
 }
 
+variable "vault_token" {
+  description = "Vault token with permissions to create SSH secrets engine, AppRole, and policies"
+  type        = string
+  sensitive   = true
+}
+
 variable "vault_namespace" {
   description = "Vault Enterprise namespace (leave empty for OSS Vault)"
   type        = string
   default     = ""
-}
-
-variable "vault_ssh_role" {
-  description = "Vault SSH CA role name for issuing certificates"
-  type        = string
-  default     = "promptops"
 }

@@ -1,16 +1,15 @@
 # Ansible Automation Platform Integration
 #
 # Terraform Actions trigger AAP job after VM creation.
-# AAP configures the instance (Day-2 configuration).
-#
-# Using Terraform Actions (1.14+) instead of aap_job resource ensures
-# the job runs as a lifecycle event, not a managed resource.
+# AAP configures the instances (Day-2 configuration).
 #
 # The playbook uses Vault SSH CA for ephemeral credentials:
-#   1. AAP authenticates to Vault via AppRole (credentials injected by Job Template)
-#   2. Vault issues ephemeral SSH private key + signed certificate
-#   3. AAP connects to VMs using Vault-signed credentials
+#   1. Playbook authenticates to Vault via AppRole (credentials passed via extra_vars)
+#   2. Vault issues ephemeral SSH private key + signed certificate via /ssh/issue
+#   3. Playbook connects to VMs using Vault-signed credentials
 #   4. Credentials are shredded after use
+#
+# No static keys are stored in AAP - everything is generated at runtime.
 
 action "aap_job_launch" "configure_vm" {
   config {
@@ -23,9 +22,11 @@ action "aap_job_launch" "configure_vm" {
       ssh_user     = var.ssh_user
 
       # Vault configuration for SSH CA
-      vault_addr      = var.vault_addr
-      vault_namespace = var.vault_namespace
-      vault_ssh_role  = var.vault_ssh_role
+      vault_addr              = var.vault_addr
+      vault_namespace         = var.vault_namespace
+      vault_ssh_role          = local.vault_ssh_role_name
+      vault_approle_role_id   = local.vault_approle_role_id
+      vault_approle_secret_id = local.vault_approle_secret_id
     })
   }
 }

@@ -41,7 +41,8 @@ module "compute" {
   vm_count            = var.vm_count
   vault_ca_public_key = local.vault_ca_public_key
 
-  depends_on = [module.encryption]
+  # Vault SSH CA must be created before VMs (they need the CA public key)
+  depends_on = [module.encryption, vault_ssh_secret_backend_ca.ssh_ca]
 }
 
 # -----------------------------------------------------------------------------
