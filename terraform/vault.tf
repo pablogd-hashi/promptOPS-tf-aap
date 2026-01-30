@@ -113,8 +113,8 @@ data "http" "approle_check" {
 }
 
 locals {
-  # Check if approle/ exists in the auth backends response
-  approle_exists = can(jsondecode(data.http.approle_check.response_body)["approle/"])
+  # Check if approle/ exists in the auth backends response (under data key)
+  approle_exists = can(jsondecode(data.http.approle_check.response_body).data["approle/"])
 }
 
 resource "vault_auth_backend" "approle" {
