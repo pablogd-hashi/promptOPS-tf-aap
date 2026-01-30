@@ -1,0 +1,58 @@
+---
+# Issue SSH credentials for a single target host
+# This file is included by install_streamlit.yml for each target IP
+
+- name: "Set SSH key directory for {{ target_ip }}"
+  ansible.builtin.set_fact:
+    _ssh_key_dir: "/tmp/vault-ssh-{{ target_ip | hash('md5') }}"
+
+- name: "Create temporary directory for SSH credentials ({{ target_ip }})"
+  ansible.builtin.file:
+    path: "{{ _ssh_key_dir }}"
+    state: directory
+    mode: "0700"
+
+# Issue an ephemeral SSH key pair + signed certificate.
+# Vault generates the private key and signs the public key in one call.
+# The cert is valid for the TTL configured on the Vault SSH role.
+- name: "Issue SSH credentials from Vault for {{ target_ip }}"
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/ssh/issue/{{ vault_ssh_role }}"
+    method: POST
+    headers: "{{ _vault_headers | combine({'X-Vault-Token': vault_login.json.auth.client_token}) }}"
+    body_format: json
+    body:
+      key_type: "ca"
+      username: "{{ ssh_user | default('ubuntu') }}"
+    status_code: 200
+  register: vault_ssh
+  no_log: true
+
+# Write credentials to disk so SSH can use them (OpenSSH needs file paths)
+- name: "Write private key for {{ target_ip }}"
+  ansible.builtin.copy:
+    content: "{{ vault_ssh.json.data.private_key }}"
+    dest: "{{ _ssh_key_dir }}/id_rsa"
+    mode: "0600"
+  no_log: true
+
+- name: "Write signed certificate for {{ target_ip }}"
+  ansible.builtin.copy:
+    content: "{{ vault_ssh.json.data.signed_key }}"
+    dest: "{{ _ssh_key_dir }}/id_rsa-cert.pub"
+    mode: "0644"
+  no_log: true
+
+# Inject the target VM into Ansible's in-memory inventory with the
+# Vault-issued credentials. Play 2 connects using these SSH settings.
+# CertificateFile is specified explicitly to ensure compatibility across
+# all OpenSSH versions (some older versions don't auto-detect certs).
+- name: "Add {{ target_ip }} to in-memory inventory"
+  ansible.builtin.add_host:
+    name: "{{ target_ip }}"
+    groups: target
+    ansible_host: "{{ target_ip }}"
+    ansible_user: "{{ ssh_user | default('ubuntu') }}"
+    ansible_ssh_private_key_file: "{{ _ssh_key_dir }}/id_rsa"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o CertificateFile={{ _ssh_key_dir }}/id_rsa-cert.pub"
+    _ssh_key_dir: "{{ _ssh_key_dir }}"

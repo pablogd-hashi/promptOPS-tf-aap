@@ -26,19 +26,20 @@ module "encryption" {
 module "compute" {
   source = "./modules/compute_vm"
 
-  project_id        = var.project_id
-  zone              = var.zone
-  instance_name     = var.instance_name
-  machine_type      = var.machine_type
-  gpu_type          = var.gpu_type
-  gpu_count         = var.gpu_count
-  disk_size_gb      = var.disk_size_gb
-  enable_public_ip  = var.enable_public_ip
-  boot_disk_kms_key = module.encryption.kms_key_id
-  network           = var.network
-  tags              = ["gpu-worker"]
-  ssh_user          = var.ssh_user
-  ssh_public_key    = var.ssh_public_key
+  project_id          = var.project_id
+  zone                = var.zone
+  instance_name       = var.instance_name
+  machine_type        = var.machine_type
+  gpu_type            = var.gpu_type
+  gpu_count           = var.gpu_count
+  disk_size_gb        = var.disk_size_gb
+  enable_public_ip    = var.enable_public_ip
+  boot_disk_kms_key   = module.encryption.kms_key_id
+  network             = var.network
+  tags                = ["gpu-worker"]
+  ssh_user            = var.ssh_user
+  vm_count            = var.vm_count
+  vault_ca_public_key = local.vault_ca_public_key
 
   depends_on = [module.encryption]
 }
@@ -68,8 +69,8 @@ module "network" {
 # Using terraform_data resource to bind action_trigger to module completion.
 
 resource "terraform_data" "aap_trigger" {
-  # Track VM IP - if it changes, re-trigger configuration
-  input = module.compute.vm_ip
+  # Track VM IPs - if any change, re-trigger configuration
+  input = join(",", module.compute.vm_ips)
 
   depends_on = [module.compute, module.network]
 

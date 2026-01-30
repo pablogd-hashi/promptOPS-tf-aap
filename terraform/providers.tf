@@ -13,6 +13,10 @@ terraform {
     aap = {
       source = "ansible/aap"
     }
+    http = {
+      source  = "hashicorp/http"
+      version = "~> 3.0"
+    }
   }
 }
 

@@ -94,8 +94,18 @@ variable "ssh_user" {
   default     = "ubuntu"
 }
 
-variable "ssh_public_key" {
-  description = "Public SSH key for VM access"
+variable "vm_count" {
+  description = "Number of VMs to create"
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.vm_count >= 1 && var.vm_count <= 10
+    error_message = "VM count must be between 1 and 10. Platform policy limits instance allocation."
+  }
+}
+
+variable "vault_ca_public_key" {
+  description = "Vault SSH CA public key for trusted certificate authentication"
   type        = string
-  default     = ""
 }

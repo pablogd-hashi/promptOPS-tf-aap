@@ -29,6 +29,6 @@ resource "google_kms_crypto_key" "boot_disk_key" {
   key_ring = google_kms_key_ring.keyring[0].id
 
   lifecycle {
-    prevent_destroy = false  # Demo only - production should be true
+    prevent_destroy = false # Demo only - production should be true
   }
 }

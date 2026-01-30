@@ -4,14 +4,14 @@
 # Triggered by Terraform via the AAP provider after VM creation.
 # Uses Vault SSH CA for ephemeral SSH credentials — no static keys stored.
 #
-# Three-play structure:
-#   Play 1 (localhost) - Authenticate to Vault, issue SSH key + signed cert
-#   Play 2 (target)    - SSH into VM using Vault creds, install Streamlit
+# Four-play structure:
+#   Play 1 (localhost) - Authenticate to Vault, issue SSH keys for each target
+#   Play 2 (target)    - SSH into VMs using Vault creds, install Streamlit
 #   Play 3 (localhost) - Shred ephemeral SSH credentials
 #
 # Variable sources:
 #   From Terraform extra_vars:
-#     - target_host             VM IP address
+#     - target_hosts            Comma-separated VM IP addresses
 #     - ssh_user                SSH username (default: ubuntu)
 #     - vault_addr              Vault server URL
 #     - vault_namespace         Vault Enterprise namespace (empty for OSS)
@@ -29,12 +29,11 @@
 #   - VM startup script trusts the Vault CA public key (done by Terraform)
 
 # ---------------------------------------------------------------------------
-# Play 1: Obtain ephemeral SSH credentials from Vault
+# Play 1: Obtain ephemeral SSH credentials from Vault for each target
 # ---------------------------------------------------------------------------
 # Runs on localhost (AAP execution environment). Authenticates to Vault using
 # AppRole, then calls POST /ssh/issue/:role to get a private key and a
-# signed certificate. These are written to a temp directory and passed to
-# Play 2 via add_host variables.
+# signed certificate for each target host.
 
 - name: Obtain SSH credentials from Vault
   hosts: localhost
@@ -42,29 +41,23 @@
   connection: local
 
   vars:
-    # Unique temp dir per target host to avoid collisions in parallel runs
-    _ssh_key_dir: "/tmp/vault-ssh-{{ target_host | hash('md5') }}"
+    # Parse comma-separated target_hosts into a list
+    _target_list: "{{ target_hosts.split(',') | map('trim') | list }}"
 
   tasks:
     - name: Validate required variables
       ansible.builtin.assert:
         that:
-          - target_host is defined
-          - target_host | length > 0
+          - target_hosts is defined
+          - target_hosts | length > 0
           - vault_addr is defined
           - vault_approle_role_id is defined
           - vault_approle_secret_id is defined
           - vault_ssh_role is defined
         fail_msg: >-
-          Missing required variables. Ensure Terraform passes target_host,
+          Missing required variables. Ensure Terraform passes target_hosts,
           vault_addr, vault_ssh_role via extra_vars, and AAP injects
           vault_approle_role_id + vault_approle_secret_id via credential lookup.
-
-    - name: Create temporary directory for SSH credentials
-      ansible.builtin.file:
-        path: "{{ _ssh_key_dir }}"
-        state: directory
-        mode: "0700"
 
     # Build Vault headers. X-Vault-Namespace is required for Vault Enterprise;
     # omitted (empty) for OSS Vault, which ignores unknown headers.
@@ -87,56 +80,18 @@
       register: vault_login
       no_log: true
 
-    # Step 2: Issue an ephemeral SSH key pair + signed certificate.
-    # Vault generates the private key and signs the public key in one call.
-    # The cert is valid for the TTL configured on the Vault SSH role.
-    - name: Issue SSH credentials from Vault
-      ansible.builtin.uri:
-        url: "{{ vault_addr }}/v1/ssh/issue/{{ vault_ssh_role }}"
-        method: POST
-        headers: "{{ _vault_headers | combine({'X-Vault-Token': vault_login.json.auth.client_token}) }}"
-        body_format: json
-        body:
-          key_type: "ca"
-          username: "{{ ssh_user | default('ubuntu') }}"
-        status_code: 200
-      register: vault_ssh
-      no_log: true
-
-    # Write credentials to disk so SSH can use them (OpenSSH needs file paths)
-    - name: Write private key
-      ansible.builtin.copy:
-        content: "{{ vault_ssh.json.data.private_key }}"
-        dest: "{{ _ssh_key_dir }}/id_rsa"
-        mode: "0600"
-      no_log: true
-
-    - name: Write signed certificate
-      ansible.builtin.copy:
-        content: "{{ vault_ssh.json.data.signed_key }}"
-        dest: "{{ _ssh_key_dir }}/id_rsa-cert.pub"
-        mode: "0644"
-      no_log: true
-
-    # Inject the target VM into Ansible's in-memory inventory with the
-    # Vault-issued credentials. Play 2 connects using these SSH settings.
-    # CertificateFile is specified explicitly to ensure compatibility across
-    # all OpenSSH versions (some older versions don't auto-detect certs).
-    - name: Add target host to in-memory inventory
-      ansible.builtin.add_host:
-        name: "{{ target_host }}"
-        groups: target
-        ansible_host: "{{ target_host }}"
-        ansible_user: "{{ ssh_user | default('ubuntu') }}"
-        ansible_ssh_private_key_file: "{{ _ssh_key_dir }}/id_rsa"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o IdentitiesOnly=yes -o CertificateFile={{ _ssh_key_dir }}/id_rsa-cert.pub"
-        _ssh_key_dir: "{{ _ssh_key_dir }}"
+    # Step 2: Issue SSH credentials for each target host
+    - name: Issue SSH credentials for each target
+      include_tasks: issue_ssh_creds.yml
+      loop: "{{ _target_list }}"
+      loop_control:
+        loop_var: target_ip
 
 # ---------------------------------------------------------------------------
 # Play 2: Install and configure the Streamlit demo app
 # ---------------------------------------------------------------------------
-# Connects to the target VM using the Vault-issued SSH credentials from Play 1.
-# gather_facts is false because the VM may still be booting — we wait for SSH
+# Connects to target VMs using the Vault-issued SSH credentials from Play 1.
+# gather_facts is false because VMs may still be booting — we wait for SSH
 # first, then gather facts explicitly.
 
 - name: Install Streamlit demo app
@@ -285,7 +240,7 @@
           Streamlit Demo App Installed!
           ============================================
 
-          Access at: http://{{ target_host }}:{{ app_port }}
+          Access at: http://{{ ansible_host }}:{{ app_port }}
 
           ============================================
 
@@ -302,12 +257,12 @@
   connection: local
 
   tasks:
-    - name: Shred private key
-      ansible.builtin.command:
-        cmd: shred -u {{ hostvars[groups['target'][0]]['_ssh_key_dir'] }}/id_rsa
+    - name: Shred and remove SSH credentials for each target
+      ansible.builtin.shell: |
+        for dir in /tmp/vault-ssh-*; do
+          if [ -d "$dir" ]; then
+            shred -u "$dir"/id_rsa 2>/dev/null || true
+            rm -rf "$dir"
+          fi
+        done
       ignore_errors: true
-
-    - name: Remove SSH credential directory
-      ansible.builtin.file:
-        path: "{{ hostvars[groups['target'][0]]['_ssh_key_dir'] }}"
-        state: absent

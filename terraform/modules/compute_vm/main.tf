@@ -12,7 +12,9 @@ terraform {
 }
 
 resource "google_compute_instance" "vm" {
-  name         = var.instance_name
+  count = var.vm_count
+
+  name         = var.vm_count > 1 ? "${var.instance_name}-${count.index + 1}" : var.instance_name
   machine_type = var.machine_type
   zone         = var.zone
   project      = var.project_id
@@ -65,6 +67,28 @@ resource "google_compute_instance" "vm" {
   }
 
   metadata = {
-    ssh-keys = var.ssh_public_key != "" ? "${var.ssh_user}:${var.ssh_public_key}" : null
+    startup-script = <<-EOF
+      #!/bin/bash
+      # Configure sshd to trust Vault SSH CA signed certificates
+
+      CA_KEY_FILE="/etc/ssh/trusted-user-ca-keys.pem"
+
+      # Write Vault CA public key
+      cat > "$CA_KEY_FILE" <<'CAKEY'
+      ${var.vault_ca_public_key}
+      CAKEY
+
+      chmod 644 "$CA_KEY_FILE"
+
+      # Configure sshd to trust the CA
+      if ! grep -q "TrustedUserCAKeys" /etc/ssh/sshd_config; then
+        echo "TrustedUserCAKeys $CA_KEY_FILE" >> /etc/ssh/sshd_config
+      fi
+
+      # Restart sshd to apply changes
+      systemctl restart sshd
+
+      echo "Vault SSH CA trust configured successfully"
+    EOF
   }
 }

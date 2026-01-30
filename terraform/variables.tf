@@ -29,10 +29,16 @@ variable "zone" {
 # Compute Configuration
 # -----------------------------------------------------------------------------
 
+variable "vm_count" {
+  description = "Number of VMs to create. ALLOWED: 1-10"
+  type        = number
+  default     = 1
+}
+
 variable "instance_name" {
-  description = "Name for the VM instance"
+  description = "Base name for VM instances (will be suffixed with index)"
   type        = string
-  default     = "gpu-worker-01"
+  default     = "gpu-worker"
 }
 
 variable "machine_type" {
@@ -128,7 +134,23 @@ variable "ssh_user" {
   default     = "ubuntu"
 }
 
-variable "ssh_public_key" {
-  description = "Public SSH key for VM access. Must match the private key in the AAP Machine Credential."
+# -----------------------------------------------------------------------------
+# Vault SSH CA Configuration
+# -----------------------------------------------------------------------------
+
+variable "vault_addr" {
+  description = "Vault server URL (e.g., https://vault.example.com:8200)"
   type        = string
+}
+
+variable "vault_namespace" {
+  description = "Vault Enterprise namespace (leave empty for OSS Vault)"
+  type        = string
+  default     = ""
+}
+
+variable "vault_ssh_role" {
+  description = "Vault SSH CA role name for issuing certificates"
+  type        = string
+  default     = "promptops"
 }

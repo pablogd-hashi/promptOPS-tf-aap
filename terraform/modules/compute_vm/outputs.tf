@@ -1,31 +1,47 @@
 # Compute VM Module - Outputs
 
-output "vm_ip" {
-  description = "External IP address of the VM (if public IP enabled)"
-  value       = var.enable_public_ip ? google_compute_instance.vm.network_interface[0].access_config[0].nat_ip : null
+output "vm_ips" {
+  description = "External IP addresses of the VMs (if public IP enabled)"
+  value       = var.enable_public_ip ? [for vm in google_compute_instance.vm : vm.network_interface[0].access_config[0].nat_ip] : []
 }
 
-output "vm_internal_ip" {
-  description = "Internal IP address of the VM"
-  value       = google_compute_instance.vm.network_interface[0].network_ip
+output "vm_internal_ips" {
+  description = "Internal IP addresses of the VMs"
+  value       = [for vm in google_compute_instance.vm : vm.network_interface[0].network_ip]
 }
 
-output "instance_name" {
-  description = "Name of the VM instance"
-  value       = google_compute_instance.vm.name
+output "instance_names" {
+  description = "Names of the VM instances"
+  value       = [for vm in google_compute_instance.vm : vm.name]
 }
 
-output "zone" {
-  description = "Zone where the VM is deployed"
-  value       = google_compute_instance.vm.zone
+output "zones" {
+  description = "Zones where the VMs are deployed"
+  value       = [for vm in google_compute_instance.vm : vm.zone]
 }
 
 output "machine_type" {
-  description = "Machine type of the VM"
-  value       = google_compute_instance.vm.machine_type
+  description = "Machine type of the VMs"
+  value       = var.machine_type
 }
 
-output "self_link" {
-  description = "Self-link of the VM instance"
-  value       = google_compute_instance.vm.self_link
+output "self_links" {
+  description = "Self-links of the VM instances"
+  value       = [for vm in google_compute_instance.vm : vm.self_link]
+}
+
+# Convenience outputs for single-VM backwards compatibility
+output "vm_ip" {
+  description = "External IP of first VM (backwards compatible)"
+  value       = var.enable_public_ip && length(google_compute_instance.vm) > 0 ? google_compute_instance.vm[0].network_interface[0].access_config[0].nat_ip : null
+}
+
+output "instance_name" {
+  description = "Name of first VM (backwards compatible)"
+  value       = length(google_compute_instance.vm) > 0 ? google_compute_instance.vm[0].name : null
+}
+
+output "zone" {
+  description = "Zone of first VM (backwards compatible)"
+  value       = length(google_compute_instance.vm) > 0 ? google_compute_instance.vm[0].zone : null
 }

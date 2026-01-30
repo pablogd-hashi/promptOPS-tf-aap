@@ -4,29 +4,34 @@
 # Compute Outputs
 # -----------------------------------------------------------------------------
 
-output "vm_ip" {
-  description = "External IP address of the VM"
-  value       = module.compute.vm_ip
+output "vm_ips" {
+  description = "External IP addresses of the VMs"
+  value       = module.compute.vm_ips
 }
 
-output "instance_name" {
-  description = "Name of the VM instance"
-  value       = module.compute.instance_name
+output "instance_names" {
+  description = "Names of the VM instances"
+  value       = module.compute.instance_names
+}
+
+output "vm_count" {
+  description = "Number of VMs created"
+  value       = var.vm_count
 }
 
 output "zone" {
-  description = "Zone where the VM is deployed"
+  description = "Zone where the VMs are deployed"
   value       = module.compute.zone
 }
 
 output "machine_type" {
-  description = "Machine type of the VM"
+  description = "Machine type of the VMs"
   value       = module.compute.machine_type
 }
 
-output "ssh_command" {
-  description = "SSH command to connect to the instance"
-  value       = "gcloud compute ssh ${module.compute.instance_name} --zone=${module.compute.zone} --project=${var.project_id}"
+output "ssh_commands" {
+  description = "SSH commands to connect to the instances"
+  value       = [for name in module.compute.instance_names : "gcloud compute ssh ${name} --zone=${module.compute.zone} --project=${var.project_id}"]
 }
 
 # -----------------------------------------------------------------------------
@@ -43,14 +48,14 @@ output "streamlit_enabled" {
   value       = module.network.streamlit_enabled
 }
 
-output "app_url" {
-  description = "URL to access the Streamlit demo app (if enabled)"
-  value       = module.network.streamlit_enabled ? "http://${module.compute.vm_ip}:8501" : "App port is closed"
+output "app_urls" {
+  description = "URLs to access the Streamlit demo app on each VM (if enabled)"
+  value       = module.network.streamlit_enabled ? [for ip in module.compute.vm_ips : "http://${ip}:8501"] : []
 }
 
 output "app_status" {
   description = "Human-readable app access status"
-  value       = module.network.streamlit_enabled ? "App is accessible at http://${module.compute.vm_ip}:8501" : "App is running but port 8501 is closed. Ask to 'enable streamlit access'."
+  value       = module.network.streamlit_enabled ? "Apps are accessible at port 8501 on each VM" : "Apps are running but port 8501 is closed. Ask to 'enable streamlit access'."
 }
 
 # -----------------------------------------------------------------------------
@@ -60,6 +65,15 @@ output "app_status" {
 output "encryption_enabled" {
   description = "Whether boot disk encryption is enabled"
   value       = module.encryption.encryption_enabled
+}
+
+# -----------------------------------------------------------------------------
+# Vault SSH CA Outputs
+# -----------------------------------------------------------------------------
+
+output "vault_ssh_ca_configured" {
+  description = "Whether Vault SSH CA trust is configured on VMs"
+  value       = true
 }
 
 # -----------------------------------------------------------------------------
