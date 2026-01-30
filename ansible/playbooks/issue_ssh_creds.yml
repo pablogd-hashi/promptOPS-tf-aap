@@ -22,11 +22,11 @@
     headers: "{{ _vault_headers | combine({'X-Vault-Token': vault_login.json.auth.client_token}) }}"
     body_format: json
     body:
-      key_type: "ca"
-      username: "{{ ssh_user | default('ubuntu') }}"
+      key_type: "rsa"
+      key_bits: 4096
     status_code: 200
   register: vault_ssh
-  no_log: false  # TEMP: debugging Vault SSH issue error
+  no_log: true
 
 # Write credentials to disk so SSH can use them (OpenSSH needs file paths)
 - name: "Write private key for {{ target_ip }}"
