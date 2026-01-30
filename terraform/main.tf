@@ -42,7 +42,8 @@ module "compute" {
   vault_ca_public_key = local.vault_ca_public_key
 
   # Vault SSH CA must be created before VMs (they need the CA public key)
-  depends_on = [module.encryption, vault_ssh_secret_backend_ca.ssh_ca]
+  # The data.http.vault_ca_public_key ensures CA exists before we use it
+  depends_on = [module.encryption, data.http.vault_ca_public_key]
 }
 
 # -----------------------------------------------------------------------------
