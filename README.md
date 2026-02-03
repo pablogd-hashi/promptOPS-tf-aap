@@ -195,70 +195,267 @@ promptops/
     └── architecture.md    # Detailed diagrams
 ```
 
-## AAP Integration with Terraform Actions
+## End-to-End Infrastructure Flow
 
-After Terraform creates the VM, it triggers Ansible Automation Platform (AAP) to install a demo Streamlit app. This integration uses Terraform Actions, which is a feature introduced in Terraform 1.14.
+PromptOps orchestrates a complete infrastructure pipeline: from user intent to configured VMs, using Terraform Actions, Vault SSH CA, and AAP — all in a single `terraform apply`.
 
-### What are Terraform Actions?
+### Architecture Diagram
 
-Terraform Actions solve a problem that has been around for a while: how do you run non-CRUD operations (like triggering Ansible, invoking a Lambda, or invalidating a cache) as part of your infrastructure workflow? Before Actions existed, people used workarounds like `local-exec` provisioners or fake data sources. These approaches were brittle and did not really fit Terraform's mental model.
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              SINGLE TERRAFORM APPLY                              │
+└─────────────────────────────────────────────────────────────────────────────────┘
 
-Actions work differently. They are declared in your Terraform config rather than hidden in shell scripts, they trigger on resource lifecycle events (`after_create`, `after_update`, `before_destroy`), and they do not manage state — they just run when needed. You can also invoke them manually with `terraform apply -invoke action.aap_job_launch.configure_vm`.
+     ┌──────────────┐
+     │   User       │
+     │  "I need a   │
+     │   GPU VM"    │
+     └──────┬───────┘
+            │
+            ▼
+     ┌──────────────┐      ┌──────────────┐
+     │  PromptOps   │─────▶│  terraform   │
+     │   (LLM)      │      │   .tfvars    │
+     └──────────────┘      └──────┬───────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                            TERRAFORM APPLY                                       │
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │ PHASE 1: Provision Vault (if not exists)                                │    │
+│  │                                                                         │    │
+│  │  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐            │    │
+│  │  │ SSH Secrets  │     │   AppRole    │     │    Policy    │            │    │
+│  │  │   Engine     │     │    Role      │     │ (ssh/issue)  │            │    │
+│  │  └──────────────┘     └──────────────┘     └──────────────┘            │    │
+│  │         │                    │                    │                     │    │
+│  │         └────────────────────┴────────────────────┘                     │    │
+│  │                              │                                          │    │
+│  │                              ▼                                          │    │
+│  │                    ┌──────────────────┐                                 │    │
+│  │                    │  Vault SSH CA    │                                 │    │
+│  │                    │  (generates CA   │                                 │    │
+│  │                    │   key pair)      │                                 │    │
+│  │                    └────────┬─────────┘                                 │    │
+│  │                             │ CA public key                             │    │
+│  └─────────────────────────────┼───────────────────────────────────────────┘    │
+│                                │                                                 │
+│  ┌─────────────────────────────┼───────────────────────────────────────────┐    │
+│  │ PHASE 2: Create VMs         │                                           │    │
+│  │                             ▼                                           │    │
+│  │  ┌──────────────────────────────────────────────────────┐              │    │
+│  │  │                    GCP Compute                        │              │    │
+│  │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐              │              │    │
+│  │  │  │  VM 1   │  │  VM 2   │  │  VM N   │              │              │    │
+│  │  │  │         │  │         │  │         │              │              │    │
+│  │  │  │ startup │  │ startup │  │ startup │◀─────────────┼──────────────┤    │
+│  │  │  │ script  │  │ script  │  │ script  │ (installs    │              │    │
+│  │  │  │         │  │         │  │         │  CA pub key) │              │    │
+│  │  │  └─────────┘  └─────────┘  └─────────┘              │              │    │
+│  │  │       │             │            │                   │              │    │
+│  │  │       └─────────────┴────────────┘                   │              │    │
+│  │  │                     │                                │              │    │
+│  │  └─────────────────────┼────────────────────────────────┘              │    │
+│  │                        │ VM IPs                                        │    │
+│  └────────────────────────┼───────────────────────────────────────────────┘    │
+│                           │                                                     │
+│  ┌────────────────────────┼───────────────────────────────────────────────┐    │
+│  │ PHASE 3: Trigger AAP   │                                               │    │
+│  │                        ▼                                               │    │
+│  │  ┌──────────────────────────────────────────────────────────────┐     │    │
+│  │  │              Terraform Action (after_create)                  │     │    │
+│  │  │                                                               │     │    │
+│  │  │  extra_vars = {                                               │     │    │
+│  │  │    target_hosts:           "10.0.1.5,10.0.1.6"               │     │    │
+│  │  │    ssh_user:               "ubuntu"                           │     │    │
+│  │  │    vault_addr:             "https://vault.example.com:8200"   │     │    │
+│  │  │    vault_namespace:        "admin"                            │     │    │
+│  │  │    vault_ssh_role:         "promptops"                        │     │    │
+│  │  │    vault_approle_role_id:  "abc123..."  ◀── from vault.tf    │     │    │
+│  │  │    vault_approle_secret_id: "xyz789..." ◀── from vault.tf    │     │    │
+│  │  │  }                                                            │     │    │
+│  │  └──────────────────────────────┬────────────────────────────────┘     │    │
+│  │                                 │                                       │    │
+│  └─────────────────────────────────┼───────────────────────────────────────┘    │
+│                                    │                                            │
+└────────────────────────────────────┼────────────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              AAP JOB EXECUTION                                   │
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │ PLAY 1: Get Ephemeral SSH Keys (localhost)                              │    │
+│  │                                                                         │    │
+│  │  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐            │    │
+│  │  │   AppRole    │────▶│    Vault     │────▶│  /ssh/issue  │            │    │
+│  │  │    Login     │     │   Auth OK    │     │   endpoint   │            │    │
+│  │  └──────────────┘     └──────────────┘     └──────┬───────┘            │    │
+│  │                                                   │                     │    │
+│  │                       ┌───────────────────────────┘                     │    │
+│  │                       │                                                 │    │
+│  │                       ▼                                                 │    │
+│  │            ┌─────────────────────┐                                      │    │
+│  │            │  Vault generates:   │                                      │    │
+│  │            │  - Private key      │  (ephemeral, 30min TTL)              │    │
+│  │            │  - Signed cert      │                                      │    │
+│  │            └─────────────────────┘                                      │    │
+│  │                       │                                                 │    │
+│  │                       ▼                                                 │    │
+│  │            ┌─────────────────────┐                                      │    │
+│  │            │  Write to temp dir  │                                      │    │
+│  │            │  /tmp/vault-ssh-*   │                                      │    │
+│  │            └─────────────────────┘                                      │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │ PLAY 2: Configure VMs (target hosts)                                    │    │
+│  │                                                                         │    │
+│  │  ┌──────────────┐         ┌──────────────┐         ┌──────────────┐    │    │
+│  │  │     AAP      │──SSH───▶│    VM 1      │         │    VM N      │    │    │
+│  │  │  (with cert) │         │              │   ...   │              │    │    │
+│  │  └──────────────┘         │  - Install   │         │  - Install   │    │    │
+│  │         │                 │    packages  │         │    packages  │    │    │
+│  │         │                 │  - Deploy    │         │  - Deploy    │    │    │
+│  │         │                 │    Streamlit │         │    Streamlit │    │    │
+│  │         │                 └──────────────┘         └──────────────┘    │    │
+│  │         │                        ▲                        ▲            │    │
+│  │         │                        │                        │            │    │
+│  │         └────────────────────────┴────────────────────────┘            │    │
+│  │                    SSH with Vault-signed certificate                    │    │
+│  │                    (VM trusts CA, no static keys needed)                │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐    │
+│  │ PLAY 3: Cleanup (localhost)                                             │    │
+│  │                                                                         │    │
+│  │  shred -u /tmp/vault-ssh-*/id_rsa   (secure delete private keys)       │    │
+│  │  rm -rf /tmp/vault-ssh-*                                                │    │
+│  └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
 
-### How PromptOps Uses Actions
-
-```hcl
-# terraform/aap.tf
-action "aap_job_launch" "configure_vm" {
-  config {
-    job_template_id     = var.aap_job_template_id
-    wait_for_completion = true
-
-    extra_vars = jsonencode({
-      target_host = module.compute.vm_ip
-      ssh_user    = var.ssh_user
-    })
-  }
-}
-
-# terraform/main.tf
-resource "terraform_data" "aap_trigger" {
-  input = module.compute.vm_ip
-  depends_on = [module.compute, module.network]
-
-  lifecycle {
-    action_trigger {
-      events  = [after_create, after_update]
-      actions = [action.aap_job_launch.configure_vm]
-    }
-  }
-}
+                                     │
+                                     ▼
+                          ┌──────────────────┐
+                          │     SUCCESS      │
+                          │                  │
+                          │  VMs configured  │
+                          │  No static keys  │
+                          │  Full audit log  │
+                          └──────────────────┘
 ```
 
-The flow works like this: first `module.compute` creates the VM and gets an IP address, then `module.network` creates the firewall rules, then `terraform_data.aap_trigger` completes which triggers the `after_create` event, then `action.aap_job_launch.configure_vm` fires and calls the AAP API with the VM IP, and finally AAP runs the playbook and installs Streamlit on the VM.
+### The Complete Flow
 
-### Why Actions Instead of Resources?
+1. **User describes intent** → PromptOps LLM generates `terraform.tfvars`
 
-The older approach used an `aap_job` resource:
+2. **`terraform apply`** runs three phases in sequence:
 
-```hcl
-# OLD - Don't use this
-resource "aap_job" "configure_vm" {
-  job_template_id = var.aap_job_template_id
-  extra_vars = jsonencode({ target_host = module.compute.vm_ip })
-}
+   **Phase 1 - Vault Provisioning:**
+   - Creates SSH secrets engine at `/ssh` (if not exists)
+   - Generates CA key pair for signing certificates
+   - Creates AppRole with policy for `/ssh/issue/*`
+   - Outputs `role_id` and `secret_id` for AAP
+
+   **Phase 2 - VM Creation:**
+   - Creates GCP VMs with GPU (1-10 instances)
+   - Startup script installs Vault CA public key in `/etc/ssh/trusted-user-ca-keys.pem`
+   - Configures `sshd` to trust certificates signed by Vault CA
+   - Creates firewall rules (SSH, Streamlit ports)
+
+   **Phase 3 - AAP Trigger:**
+   - Terraform Action fires on `after_create`
+   - Passes ALL credentials via `extra_vars` (no AAP credential config needed)
+   - Waits for job completion
+
+3. **AAP Job Execution:**
+
+   **Play 1 (localhost):** Authenticate to Vault via AppRole, call `/ssh/issue/promptops` to get ephemeral private key + signed certificate
+
+   **Play 2 (target VMs):** SSH using Vault-signed certificate, install packages, deploy Streamlit app
+
+   **Play 3 (localhost):** Securely shred ephemeral SSH keys
+
+4. **Result:** Fully configured VMs, zero static SSH keys, complete audit trail in Vault
+
+### Security Model
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ZERO STATIC KEYS                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Traditional SSH:                                                │
+│  ┌─────────┐    static key    ┌─────────┐                       │
+│  │   AAP   │─────────────────▶│   VM    │                       │
+│  └─────────┘   (stored in     └─────────┘                       │
+│                 AAP forever)                                     │
+│                                                                  │
+│  ────────────────────────────────────────────────────────────── │
+│                                                                  │
+│  Vault SSH CA:                                                   │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐                      │
+│  │   AAP   │───▶│  Vault  │───▶│   VM    │                      │
+│  └─────────┘    └─────────┘    └─────────┘                      │
+│       │              │              │                            │
+│       │         generates      validates                         │
+│       │         ephemeral      against                           │
+│       │         key + cert     CA pubkey                         │
+│       │              │              │                            │
+│       │              ▼              │                            │
+│       │     ┌─────────────────┐    │                            │
+│       └────▶│  30-min TTL     │────┘                            │
+│             │  auto-expires   │                                  │
+│             │  audit logged   │                                  │
+│             └─────────────────┘                                  │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-There are several problems with treating the job as a resource. The job becomes managed state that Terraform tracks, which means `terraform destroy` tries to "destroy" the job (which does not really make sense). Re-running `terraform apply` might re-trigger the job unexpectedly, and in some providers the job runs during the plan phase. Actions fix these issues because they run exactly when you want them to (on lifecycle events) and do not pollute your state file.
+### AAP Setup (One-Time)
 
-### Manual Invocation
+No credentials needed in AAP. Terraform passes everything via `extra_vars`.
 
-You can re-run the Ansible configuration without recreating the VM:
+| Field | Value |
+|-------|-------|
+| **Name** | `PromptOps Configure VM` |
+| **Inventory** | Any (playbook ignores it) |
+| **Project** | Git repo with playbooks |
+| **Playbook** | `ansible/playbooks/install_streamlit.yml` |
+| **Credentials** | *None required* |
+
+### terraform.tfvars
+
+```hcl
+# GCP
+project_id = "my-project"
+region     = "us-central1"
+zone       = "us-central1-a"
+
+# Compute
+vm_count     = 2
+machine_type = "n1-standard-4"
+gpu_type     = "nvidia-tesla-t4"
+gpu_count    = 1
+
+# AAP
+aap_host            = "https://aap.example.com"
+aap_username        = "admin"
+aap_password        = "secret"
+aap_job_template_id = 30
+
+# Vault
+vault_addr      = "https://vault.example.com:8200"
+vault_token     = "hvs.xxx"  # Admin token for provisioning
+vault_namespace = "admin"    # HCP Vault namespace
+```
+
+### Manual Re-run
+
+Re-run AAP configuration without recreating VMs:
 
 ```bash
 terraform apply -invoke action.aap_job_launch.configure_vm
 ```
-
-This is useful when the playbook has changed and you want to re-apply it, when an AAP job failed and you want to retry, or when you want to reconfigure the VM without recreating the infrastructure.
-
-See [docs/setup.md](docs/setup.md) for AAP configuration and [docs/architecture.md](docs/architecture.md) for detailed diagrams.

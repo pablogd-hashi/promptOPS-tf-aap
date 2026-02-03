@@ -36,12 +36,11 @@ provider "aap" {
   insecure_skip_verify = true
 }
 
-# Vault Provider - manages SSH CA and AppRole
+# Vault Provider - provisions SSH CA and AppRole if not exists
 provider "vault" {
   address   = var.vault_addr
   token     = var.vault_token
   namespace = var.vault_namespace != "" ? var.vault_namespace : null
 
-  # Skip TLS verification for demo (use proper certs in production)
   skip_tls_verify = true
 }
