@@ -144,7 +144,7 @@ variable "vault_addr" {
 }
 
 variable "vault_token" {
-  description = "Vault token with permissions to create SSH secrets engine, AppRole, and policies"
+  description = "Vault admin token (use HCP service principal for long-lived token)"
   type        = string
   sensitive   = true
 }
@@ -153,4 +153,10 @@ variable "vault_namespace" {
   description = "Vault Enterprise namespace (leave empty for OSS Vault)"
   type        = string
   default     = ""
+}
+
+variable "vault_ssh_role" {
+  description = "Vault SSH role name for certificate issuance"
+  type        = string
+  default     = "ssh-role"
 }

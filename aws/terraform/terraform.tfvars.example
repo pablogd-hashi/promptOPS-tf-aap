@@ -1,0 +1,73 @@
+# Example terraform.tfvars
+# Copy to terraform.tfvars and fill in your values
+#
+# For Terraform Cloud, see TFC_VARIABLES.md for variable configuration
+# -----------------------------------------------------------------------------
+
+# =============================================================================
+# AWS Configuration
+# =============================================================================
+aws_region = "us-east-1"
+
+# =============================================================================
+# AAP Configuration (REQUIRED)
+# =============================================================================
+
+# AAP Host URL - IMPORTANT for Terraform Actions
+#
+# TWO-STAGE DEPLOYMENT (creating new AAP):
+#   1. First run: Leave as placeholder, run `terraform apply` to create AAP
+#   2. Get the AAP URL from outputs: `terraform output aap_url`
+#   3. Update aap_host below with the actual URL
+#   4. Run `terraform apply` again to trigger the AAP action
+#
+# SINGLE-STAGE (using existing AAP):
+#   Set to your existing AAP URL and run `terraform apply` once
+#
+aap_host = "https://placeholder.local"  # Update after first apply!
+
+# Create new AAP infrastructure?
+create_aap        = true
+create_alb        = true              # ALB with HTTPS via Let's Encrypt
+aap_instance_type = "m6a.xlarge"
+
+# AAP credentials
+aap_username        = "admin"
+aap_password        = "YourPassword"  # REQUIRED
+aap_job_template_id = 42              # REQUIRED - create this in AAP first
+
+# =============================================================================
+# Vault Configuration (REQUIRED)
+# =============================================================================
+vault_addr      = "https://vault.example.com:8200"  # REQUIRED
+vault_token     = "hvs.your-token"                   # REQUIRED - needs admin perms
+vault_namespace = "admin"                            # Leave empty "" for OSS Vault
+
+# =============================================================================
+# Target VMs
+# =============================================================================
+target_vm_count      = 1
+target_instance_type = "t3.medium"
+ssh_user             = "ec2-user"
+
+# Custom AMI (optional - defaults to Amazon Linux 2023)
+# target_ami_id = "ami-xxxxxxxxx"
+
+# =============================================================================
+# Network
+# =============================================================================
+vpc_cidr          = "10.1.0.0/16"
+allowed_ssh_cidrs = ["0.0.0.0/0"]  # RESTRICT IN PRODUCTION
+
+# =============================================================================
+# Naming
+# =============================================================================
+name_prefix = "tf-actions-demo"
+
+# =============================================================================
+# Additional Tags (optional)
+# =============================================================================
+# tags = {
+#   Environment = "demo"
+#   Owner       = "your-name"
+# }
