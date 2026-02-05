@@ -1,73 +1,70 @@
-# Example terraform.tfvars
-# Copy to terraform.tfvars and fill in your values
+# -----------------------------------------------------------------------------
+# AWS Vault SSH CA Demo - Configuration
+# -----------------------------------------------------------------------------
+# Copy this file to terraform.tfvars and update with your values.
 #
-# For Terraform Cloud, see TFC_VARIABLES.md for variable configuration
+# Prerequisites:
+#   - Existing AAP controller (not provisioned by this repo)
+#   - HashiCorp Vault with network access
+#   - AWS credentials configured
 # -----------------------------------------------------------------------------
 
-# =============================================================================
+# -----------------------------------------------------------------------------
+# AAP Configuration (Existing Controller)
+# -----------------------------------------------------------------------------
+# Provide connection details for your existing AAP controller.
+
+aap_host                 = "https://aap.example.com"
+aap_username             = "admin"
+aap_password             = "your-aap-password"
+aap_job_template_id      = 1
+aap_insecure_skip_verify = false
+
+# -----------------------------------------------------------------------------
+# Vault Configuration
+# -----------------------------------------------------------------------------
+
+vault_addr      = "https://vault.example.com:8200"
+vault_token     = "hvs.your-vault-token"
+vault_namespace = ""  # Leave empty for OSS Vault, use "admin" for HCP Vault
+vault_ssh_role  = "target"
+
+# -----------------------------------------------------------------------------
 # AWS Configuration
-# =============================================================================
+# -----------------------------------------------------------------------------
+
 aws_region = "us-east-1"
 
-# =============================================================================
-# AAP Configuration (REQUIRED)
-# =============================================================================
+# -----------------------------------------------------------------------------
+# Target VM Configuration
+# -----------------------------------------------------------------------------
 
-# AAP Host URL - IMPORTANT for Terraform Actions
-#
-# TWO-STAGE DEPLOYMENT (creating new AAP):
-#   1. First run: Leave as placeholder, run `terraform apply` to create AAP
-#   2. Get the AAP URL from outputs: `terraform output aap_url`
-#   3. Update aap_host below with the actual URL
-#   4. Run `terraform apply` again to trigger the AAP action
-#
-# SINGLE-STAGE (using existing AAP):
-#   Set to your existing AAP URL and run `terraform apply` once
-#
-aap_host = "https://placeholder.local"  # Update after first apply!
-
-# Create new AAP infrastructure?
-create_aap        = true
-create_alb        = true              # ALB with HTTPS via Let's Encrypt
-aap_instance_type = "m6a.xlarge"
-
-# AAP credentials
-aap_username        = "admin"
-aap_password        = "YourPassword"  # REQUIRED
-aap_job_template_id = 42              # REQUIRED - create this in AAP first
-
-# =============================================================================
-# Vault Configuration (REQUIRED)
-# =============================================================================
-vault_addr      = "https://vault.example.com:8200"  # REQUIRED
-vault_token     = "hvs.your-token"                   # REQUIRED - needs admin perms
-vault_namespace = "admin"                            # Leave empty "" for OSS Vault
-
-# =============================================================================
-# Target VMs
-# =============================================================================
 target_vm_count      = 1
-target_instance_type = "t3.medium"
+target_instance_type = "t3.micro"
+target_ami_id        = ""  # Leave empty to use latest Amazon Linux 2023
 ssh_user             = "ec2-user"
+root_volume_size     = 20
 
-# Custom AMI (optional - defaults to Amazon Linux 2023)
-# target_ami_id = "ami-xxxxxxxxx"
+# -----------------------------------------------------------------------------
+# Network Configuration
+# -----------------------------------------------------------------------------
 
-# =============================================================================
-# Network
-# =============================================================================
-vpc_cidr          = "10.1.0.0/16"
-allowed_ssh_cidrs = ["0.0.0.0/0"]  # RESTRICT IN PRODUCTION
+vpc_cidr = "10.1.0.0/16"
 
-# =============================================================================
-# Naming
-# =============================================================================
-name_prefix = "tf-actions-demo"
+# CIDR blocks allowed to SSH to target VMs (restrict in production!)
+allowed_ssh_cidrs = []
 
-# =============================================================================
-# Additional Tags (optional)
-# =============================================================================
-# tags = {
-#   Environment = "demo"
-#   Owner       = "your-name"
-# }
+# CIDR block of your AAP controller for SSH access to targets
+# Required for AAP to connect to target VMs
+aap_cidr = "10.0.0.0/8"  # Update with your AAP controller's CIDR
+
+# -----------------------------------------------------------------------------
+# Naming and Tags
+# -----------------------------------------------------------------------------
+
+name_prefix = "vault-ssh-demo"
+
+tags = {
+  Environment = "demo"
+  Owner       = "your-name"
+}

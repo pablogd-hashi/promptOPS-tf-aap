@@ -1,18 +1,26 @@
-version: '3'
-
-# AWS AAP + Vault SSH CA Demo
+# =============================================================================
+# AWS Vault SSH CA Demo - Taskfile
+# =============================================================================
+# Manages the complete demo workflow:
+#   1. Deploy infrastructure with Terraform
+#   2. Terraform Actions trigger AAP
+#   3. AAP configures VMs using Vault SSH CA
 #
-# This Taskfile manages the complete demo:
-#   1. Build AMIs with Packer (optional - uses existing AAP AMIs by default)
-#   2. Deploy infrastructure with Terraform
-#   3. Terraform Actions trigger AAP
-#   4. AAP configures VMs using Vault SSH CA
+# Prerequisites:
+#   - Existing AAP controller (not provisioned by this repo)
+#   - HashiCorp Vault with network access
+#   - AWS credentials configured
 #
 # Quick start:
 #   task check      - Verify prerequisites
-#   task setup      - One-time setup
+#   task setup      - One-time Terraform init
 #   task demo       - Run the full demo
 #   task destroy    - Clean up
+#
+# https://taskfile.dev
+# =============================================================================
+
+version: '3'
 
 vars:
   TF_DIR: "{{.ROOT_DIR}}/terraform"
@@ -20,13 +28,13 @@ vars:
 
 tasks:
   default:
-    desc: "Show available commands"
+    desc: Show available commands
     silent: true
     cmds:
       - |
         echo ""
-        echo "AWS AAP + Vault SSH CA Demo"
-        echo "==========================="
+        echo "AWS Vault SSH CA Demo"
+        echo "====================="
         echo ""
         echo "Prerequisites:"
         echo "  task check           Check all prerequisites"
@@ -40,7 +48,7 @@ tasks:
         echo ""
         echo "Packer (optional):"
         echo "  task packer:init     Initialize Packer"
-        echo "  task packer:build    Build AMIs with Vault SSH CA"
+        echo "  task packer:build    Build target VM AMI with Vault CA"
         echo ""
         echo "Vault SSH:"
         echo "  task vault:status    Check Vault SSH CA configuration"
@@ -51,10 +59,12 @@ tasks:
         echo "  task retrigger       Re-run AAP job without recreating infra"
         echo ""
 
-  # === PREREQUISITES ===
+  # ===========================================================================
+  # Prerequisites
+  # ===========================================================================
 
   check:
-    desc: "Check all prerequisites"
+    desc: Check all prerequisites
     silent: true
     cmds:
       - |
@@ -114,6 +124,7 @@ tasks:
           echo "✓ terraform.tfvars exists"
           grep -q "vault_addr" "{{.TF_DIR}}/terraform.tfvars" && echo "  ✓ vault_addr" || echo "  ✗ vault_addr missing"
           grep -q "vault_token" "{{.TF_DIR}}/terraform.tfvars" && echo "  ✓ vault_token" || echo "  ✗ vault_token missing"
+          grep -q "aap_host" "{{.TF_DIR}}/terraform.tfvars" && echo "  ✓ aap_host" || echo "  ✗ aap_host missing"
           grep -q "aap_password" "{{.TF_DIR}}/terraform.tfvars" && echo "  ✓ aap_password" || echo "  ✗ aap_password missing"
           grep -q "aap_job_template_id" "{{.TF_DIR}}/terraform.tfvars" && echo "  ✓ aap_job_template_id" || echo "  ✗ aap_job_template_id missing"
         else
@@ -131,7 +142,7 @@ tasks:
         echo ""
 
   setup:
-    desc: "One-time Terraform initialization"
+    desc: One-time Terraform initialization
     dir: "{{.TF_DIR}}"
     cmds:
       - |
@@ -142,17 +153,18 @@ tasks:
         echo ""
         echo "Next: task demo"
 
-  # === PACKER ===
+  # ===========================================================================
+  # Packer
+  # ===========================================================================
 
   packer:init:
-    desc: "Initialize Packer plugins"
+    desc: Initialize Packer plugins
     dir: "{{.PACKER_DIR}}"
     cmds:
-      - packer init aap-vault-ssh.pkr.hcl
       - packer init target-vm.pkr.hcl
 
   packer:build:
-    desc: "Build AMIs with Vault SSH CA pre-configured"
+    desc: Build target VM AMI with Vault SSH CA
     dir: "{{.PACKER_DIR}}"
     cmds:
       - |
@@ -162,45 +174,35 @@ tasks:
           exit 1
         fi
       - |
-        echo "Building AAP AMI..."
-        packer build -var-file=variables.pkrvars.hcl aap-vault-ssh.pkr.hcl
-      - |
-        echo ""
         echo "Building Target VM AMI..."
         packer build -var-file=variables.pkrvars.hcl target-vm.pkr.hcl
 
-  packer:build-aap:
-    desc: "Build only AAP AMI"
-    dir: "{{.PACKER_DIR}}"
-    cmds:
-      - packer build -var-file=variables.pkrvars.hcl aap-vault-ssh.pkr.hcl
-
-  packer:build-target:
-    desc: "Build only Target VM AMI"
-    dir: "{{.PACKER_DIR}}"
-    cmds:
-      - packer build -var-file=variables.pkrvars.hcl target-vm.pkr.hcl
-
-  # === DEMO FLOW ===
+  # ===========================================================================
+  # Demo Flow
+  # ===========================================================================
 
   demo:
-    desc: "Run the full demo"
+    desc: Run the full demo
     cmds:
       - task: check
       - |
         echo ""
         echo "============================================"
-        echo "  AWS AAP + Vault SSH CA Demo"
+        echo "  AWS Vault SSH CA Demo"
         echo "============================================"
         echo ""
         echo "This demo will:"
         echo "  1. Create VPC, subnets, and security groups"
-        echo "  2. Create AAP controller (or use existing)"
-        echo "  3. Create target VMs with Vault CA trust"
+        echo "  2. Create target VMs with Vault CA trust"
+        echo "  3. Configure Vault SSH secrets engine"
         echo "  4. Terraform Actions trigger AAP job"
         echo "  5. AAP authenticates to Vault via AppRole"
         echo "  6. Vault issues ephemeral SSH credentials"
         echo "  7. AAP configures target VMs"
+        echo ""
+        echo "Prerequisites:"
+        echo "  - Existing AAP controller"
+        echo "  - Job template configured in AAP"
         echo ""
         echo "Press Enter to continue or Ctrl+C to cancel..."
         read
@@ -213,7 +215,7 @@ tasks:
       - task: show
 
   plan:
-    desc: "Run Terraform plan"
+    desc: Run Terraform plan
     dir: "{{.TF_DIR}}"
     cmds:
       - |
@@ -224,7 +226,7 @@ tasks:
       - terraform plan
 
   apply:
-    desc: "Apply Terraform and trigger AAP"
+    desc: Apply Terraform and trigger AAP
     dir: "{{.TF_DIR}}"
     interactive: true
     cmds:
@@ -240,7 +242,7 @@ tasks:
         echo ""
 
   show:
-    desc: "Show outputs and status"
+    desc: Show outputs and status
     dir: "{{.TF_DIR}}"
     cmds:
       - |
@@ -250,10 +252,12 @@ tasks:
         echo ""
       - terraform output
 
-  # === VAULT SSH ===
+  # ===========================================================================
+  # Vault SSH
+  # ===========================================================================
 
   vault:status:
-    desc: "Check Vault SSH CA configuration"
+    desc: Check Vault SSH CA configuration
     cmds:
       - |
         echo ""
@@ -264,9 +268,12 @@ tasks:
         VAULT_ADDR=$(grep 'vault_addr' {{.TF_DIR}}/terraform.tfvars | cut -d'"' -f2)
         VAULT_NS=$(grep 'vault_namespace' {{.TF_DIR}}/terraform.tfvars | cut -d'"' -f2)
         VAULT_TOKEN=$(grep 'vault_token' {{.TF_DIR}}/terraform.tfvars | cut -d'"' -f2)
+        VAULT_SSH_ROLE=$(grep 'vault_ssh_role' {{.TF_DIR}}/terraform.tfvars | cut -d'"' -f2)
+        VAULT_SSH_ROLE=${VAULT_SSH_ROLE:-target}
 
         echo "Vault Address: $VAULT_ADDR"
         echo "Namespace: ${VAULT_NS:-root}"
+        echo "SSH Role: $VAULT_SSH_ROLE"
         echo ""
 
         HEADERS="-H X-Vault-Token:$VAULT_TOKEN"
@@ -290,17 +297,17 @@ tasks:
         fi
 
         # Check role
-        ROLE=$(curl -s $HEADERS "$VAULT_ADDR/v1/ssh/roles/target" 2>/dev/null)
+        ROLE=$(curl -s $HEADERS "$VAULT_ADDR/v1/ssh/roles/$VAULT_SSH_ROLE" 2>/dev/null)
         if echo "$ROLE" | grep -q '"key_type":"ca"'; then
-          echo "  ✓ SSH role 'target' configured"
+          echo "  ✓ SSH role '$VAULT_SSH_ROLE' configured"
         else
-          echo "  ✗ SSH role 'target' not found"
+          echo "  ✗ SSH role '$VAULT_SSH_ROLE' not found"
         fi
 
         echo ""
 
   vault:test:
-    desc: "Test issuing an SSH certificate"
+    desc: Test issuing an SSH certificate
     cmds:
       - |
         echo ""
@@ -311,16 +318,18 @@ tasks:
         VAULT_ADDR=$(grep 'vault_addr' {{.TF_DIR}}/terraform.tfvars | cut -d'"' -f2)
         VAULT_NS=$(grep 'vault_namespace' {{.TF_DIR}}/terraform.tfvars | cut -d'"' -f2)
         VAULT_TOKEN=$(grep 'vault_token' {{.TF_DIR}}/terraform.tfvars | cut -d'"' -f2)
+        VAULT_SSH_ROLE=$(grep 'vault_ssh_role' {{.TF_DIR}}/terraform.tfvars | cut -d'"' -f2)
+        VAULT_SSH_ROLE=${VAULT_SSH_ROLE:-target}
 
         HEADERS="-H X-Vault-Token:$VAULT_TOKEN -H Content-Type:application/json"
         [ -n "$VAULT_NS" ] && HEADERS="$HEADERS -H X-Vault-Namespace:$VAULT_NS"
 
-        echo "Issuing SSH certificate via /ssh/issue/target..."
+        echo "Issuing SSH certificate via /ssh/issue/$VAULT_SSH_ROLE..."
         echo ""
 
         RESULT=$(curl -s $HEADERS -X POST \
           -d '{"key_type":"rsa","key_bits":4096}' \
-          "$VAULT_ADDR/v1/ssh/issue/target" 2>/dev/null)
+          "$VAULT_ADDR/v1/ssh/issue/$VAULT_SSH_ROLE" 2>/dev/null)
 
         if echo "$RESULT" | grep -q '"signed_key"'; then
           echo "✓ SSH certificate issued successfully!"
@@ -334,10 +343,12 @@ tasks:
         fi
         echo ""
 
-  # === CLEANUP ===
+  # ===========================================================================
+  # Cleanup
+  # ===========================================================================
 
   destroy:
-    desc: "Destroy all infrastructure"
+    desc: Destroy all infrastructure
     dir: "{{.TF_DIR}}"
     interactive: true
     cmds:
@@ -347,7 +358,6 @@ tasks:
         echo "========================="
         echo ""
         echo "This will delete:"
-        echo "  - AAP instance and ALB (if created)"
         echo "  - Target VMs"
         echo "  - VPC and networking"
         echo ""
@@ -356,7 +366,7 @@ tasks:
       - terraform destroy
 
   retrigger:
-    desc: "Re-trigger AAP job without recreating infrastructure"
+    desc: Re-trigger AAP job without recreating infrastructure
     dir: "{{.TF_DIR}}"
     cmds:
       - |
@@ -366,34 +376,15 @@ tasks:
         echo ""
       - terraform apply -invoke "action.aap_job_launch.configure_targets"
 
-  # === HELPERS ===
+  # ===========================================================================
+  # Helpers
+  # ===========================================================================
 
-  ssh-aap:
-    desc: "SSH to AAP instance"
-    dir: "{{.TF_DIR}}"
+  clean:
+    desc: Clean Terraform state and cache
     cmds:
       - |
-        IP=$(terraform output -raw aap_public_ip 2>/dev/null)
-        if [ -z "$IP" ] || [ "$IP" = "null" ]; then
-          echo "AAP instance not found or not created"
-          exit 1
-        fi
-        terraform output -raw aap_private_key > /tmp/aap-key.pem
-        chmod 600 /tmp/aap-key.pem
-        ssh -i /tmp/aap-key.pem -o StrictHostKeyChecking=no ec2-user@$IP
-
-  ssh-target:
-    desc: "SSH to first target VM"
-    dir: "{{.TF_DIR}}"
-    cmds:
-      - |
-        IPS=$(terraform output -json target_vm_ips 2>/dev/null)
-        IP=$(echo "$IPS" | grep -o '"[^"]*"' | head -1 | tr -d '"')
-        if [ -z "$IP" ]; then
-          echo "No target VMs found"
-          exit 1
-        fi
-        terraform output -raw aap_private_key > /tmp/aap-key.pem
-        chmod 600 /tmp/aap-key.pem
-        SSH_USER=$(grep 'ssh_user' terraform.tfvars | cut -d'"' -f2)
-        ssh -i /tmp/aap-key.pem -o StrictHostKeyChecking=no ${SSH_USER:-ec2-user}@$IP
+        echo "Cleaning Terraform state..."
+        rm -rf {{.TF_DIR}}/.terraform {{.TF_DIR}}/.terraform.lock.hcl
+        rm -rf {{.TF_DIR}}/terraform.tfstate* {{.TF_DIR}}/.terraform.tfstate.lock.info
+        echo "Done!"

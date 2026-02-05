@@ -1,6 +1,8 @@
-# AWS AAP + Vault SSH CA Demo
+# AWS Vault SSH CA Demo
 
-Provisions AAP on AWS with Vault SSH CA. Demonstrates Terraform 1.14+ Actions triggering AAP with zero-trust SSH credentials.
+Demonstrates Terraform 1.14+ Actions triggering AAP with zero-trust SSH credentials using HashiCorp Vault SSH CA.
+
+> **Note:** This repository assumes you have an existing AAP (Ansible Automation Platform) controller. AAP is a licensed Red Hat product and is not deployed by this repository.
 
 ## Architecture
 
@@ -8,97 +10,83 @@ Provisions AAP on AWS with Vault SSH CA. Demonstrates Terraform 1.14+ Actions tr
 ┌─────────────────────────────────────────────────────────────────┐
 │                           AWS VPC                                │
 │                                                                  │
-│  ┌─────────┐     ┌─────────┐     ┌─────────┐                   │
-│  │   ALB   │────▶│   AAP   │────▶│ Target  │                   │
-│  │ (HTTPS) │     │         │     │   VMs   │                   │
-│  └─────────┘     └─────────┘     └─────────┘                   │
-│       │               │               ▲                         │
-│       ▼               ▼               │                         │
-│  ┌─────────┐     ┌─────────┐         │                         │
-│  │ Route53 │     │  Vault  │─────────┘                         │
-│  └─────────┘     │ SSH CA  │  Issues ephemeral certs           │
-│                  └─────────┘                                    │
-└─────────────────────────────────────────────────────────────────┘
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                     Target VMs                            │   │
+│  │  • Vault SSH CA trust configured                         │   │
+│  │  • Accepts certificates signed by Vault                  │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                              ▲                                   │
+│                              │ SSH (Vault-signed cert)          │
+│                              │                                   │
+└──────────────────────────────┼───────────────────────────────────┘
+                               │
+              ┌────────────────┴────────────────┐
+              │                                  │
+        ┌─────▼─────┐                    ┌──────▼──────┐
+        │    AAP    │  ◄─── AppRole ───► │   Vault     │
+        │ (existing)│      Auth          │  SSH CA     │
+        └───────────┘                    └─────────────┘
+              ▲
+              │ Terraform Action triggers job
+              │
+        ┌─────┴─────┐
+        │ Terraform │
+        │   Apply   │
+        └───────────┘
 ```
+
+## Prerequisites
+
+### Required
+- **Terraform** >= 1.14.0 (required for Actions)
+- **AWS CLI** configured with credentials
+- **Existing AAP Controller** with API access
+
+### Optional
+- **Packer** >= 1.9.0 (for building custom AMIs)
+- **Vault CLI** (for testing)
 
 ## Quick Start
 
 ```bash
 cd aws
-task check                          # Verify prerequisites
-task setup                          # Initialize Terraform
+
+# Check prerequisites
+task check
+
+# Initialize Terraform
+task setup
+
+# Configure variables
 cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-# Edit terraform.tfvars
-task demo                           # Run full demo
+# Edit terraform/terraform.tfvars with your values
+
+# Run full demo
+task demo
 ```
 
-## Two-Stage Deployment
+## Configuration
 
-When creating new AAP (`create_aap = true`), providers need the AAP URL at plan time, but AAP doesn't exist yet. Solution: two applies.
-
-**Stage 1** - Create infrastructure:
-```bash
-# terraform.tfvars
-aap_host = "https://placeholder.local"  # Default placeholder
-
-terraform apply
-```
-
-**Stage 2** - Trigger AAP action:
-```bash
-# Get actual URL from outputs
-terraform output aap_url
-
-# Update terraform.tfvars
-aap_host = "https://aap.your-domain.com"  # Actual URL
-
-terraform apply  # Now triggers AAP action
-```
-
-**Using existing AAP** (`create_aap = false`): Set `aap_host` to your AAP URL and run once.
-
-## Variables
-
-### Required
+### Required Variables
 
 | Variable | Description |
 |----------|-------------|
-| `aap_host` | AAP URL (placeholder on first run, actual URL on second) |
+| `aap_host` | URL of your existing AAP controller |
 | `aap_password` | AAP admin password |
-| `aap_job_template_id` | Job template ID to trigger |
+| `aap_job_template_id` | ID of the job template to trigger |
 | `vault_addr` | Vault server URL |
-| `vault_token` | Vault token with admin permissions |
+| `vault_token` | Vault token with SSH secrets engine permissions |
 
-### Optional
+### Optional Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `aws_region` | `us-east-1` | AWS region |
-| `create_aap` | `true` | Create AAP or use existing |
-| `create_alb` | `true` | Create ALB with HTTPS |
 | `target_vm_count` | `1` | Number of target VMs |
-| `vault_namespace` | `""` | Vault namespace (Enterprise/HCP) |
+| `target_instance_type` | `t3.micro` | EC2 instance type |
+| `vault_namespace` | `""` | Vault namespace (HCP/Enterprise) |
 | `ssh_user` | `ec2-user` | SSH user for targets |
-
-## Terraform Cloud
-
-### Environment Variables
-```
-AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY  (sensitive)
-```
-
-### Terraform Variables
-```hcl
-aap_host            = "https://placeholder.local"  # Update after Stage 1
-aap_password        = "xxx"                        # sensitive
-aap_job_template_id = 42
-vault_addr          = "https://vault.example.com:8200"
-vault_token         = "hvs.xxx"                    # sensitive
-vault_namespace     = "admin"
-```
-
-For production, use [dynamic credentials](https://developer.hashicorp.com/terraform/cloud-docs/workspaces/dynamic-provider-credentials) instead of static tokens.
+| `aap_cidr` | `""` | CIDR of AAP controller for SSH access |
 
 ## Task Commands
 
@@ -107,11 +95,27 @@ For production, use [dynamic credentials](https://developer.hashicorp.com/terraf
 | `task check` | Verify prerequisites |
 | `task setup` | Initialize Terraform |
 | `task demo` | Full demo flow |
+| `task plan` | Show Terraform plan |
 | `task apply` | Create infrastructure |
+| `task show` | Show outputs |
 | `task vault:status` | Check Vault SSH CA |
-| `task vault:test` | Test issuing certificate |
+| `task vault:test` | Test certificate issuance |
 | `task retrigger` | Re-run AAP action |
 | `task destroy` | Destroy infrastructure |
+
+## How It Works
+
+1. **Terraform** creates VPC, security groups, and target VMs
+2. **Target VMs** bootstrap with Vault CA trust configured in sshd
+3. **Vault** SSH secrets engine and AppRole are configured
+4. **Terraform Actions** trigger AAP job with:
+   - Target VM IPs
+   - Vault AppRole credentials
+   - SSH role information
+5. **AAP** authenticates to Vault via AppRole
+6. **Vault** issues ephemeral SSH key + signed certificate
+7. **AAP** connects to targets using Vault-signed credentials
+8. **Credentials** are shredded after use - nothing stored
 
 ## Packer (Optional)
 
@@ -124,20 +128,32 @@ cp packer/variables.pkrvars.hcl.example packer/variables.pkrvars.hcl
 task packer:build
 ```
 
-Then set `aap_ami_id` and `target_ami_id` in terraform.tfvars.
-
-## How It Works
-
-1. **Terraform** creates VPC, AAP, target VMs with Vault CA trust in sshd
-2. **Terraform Actions** trigger AAP job with target IPs and Vault credentials
-3. **AAP** authenticates to Vault via AppRole, gets ephemeral SSH key + cert
-4. **AAP** SSHs to targets using Vault-signed credentials
-5. **Credentials shredded** after use - nothing stored
+Then set `target_ami_id` in terraform.tfvars.
 
 ## Troubleshooting
 
-**AAP not healthy**: ALB checks take ~5min. Check target health in AWS console.
+### Vault SSH fails
+```bash
+task vault:status    # Check configuration
+task vault:test      # Test certificate issuance
+```
 
-**Vault SSH fails**: Run `task vault:status` and `task vault:test`
+### Target SSH fails
+Check the target VM has Vault CA trust configured:
+```bash
+# On target VM
+cat /etc/ssh/vault-ca/trusted-user-ca-keys.pem
+grep TrustedUserCAKeys /etc/ssh/sshd_config
+```
 
-**Target SSH fails**: Check `/etc/ssh/sshd_config` has `TrustedUserCAKeys` directive
+### AAP cannot reach targets
+Ensure `aap_cidr` is set to allow SSH from your AAP controller.
+
+## Security Best Practices
+
+This module follows AWS security best practices:
+- **EBS encryption** enabled on all volumes
+- **IMDSv2** required (no IMDSv1 fallback)
+- **Security groups** use explicit ingress/egress rules
+- **No 0.0.0.0/0** SSH access by default
+- **Variable validation** on all inputs

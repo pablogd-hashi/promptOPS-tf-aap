@@ -55,8 +55,6 @@ locals {
 }
 
 resource "vault_ssh_secret_backend_ca" "ssh_ca" {
-  count = local.ca_exists ? 0 : 1
-
   backend              = "ssh"
   generate_signing_key = true
 
