@@ -149,9 +149,28 @@ resource "vault_approle_auth_backend_role" "promptops" {
   depends_on = [vault_auth_backend.approle]
 }
 
-resource "vault_approle_auth_backend_role_secret_id" "promptops" {
-  backend   = "approle"
-  role_name = vault_approle_auth_backend_role.promptops.role_name
+# Generate a WRAPPED secret_id instead of plain secret_id
+# The wrapped token is single-use and time-limited (3 hours)
+# Playbook must unwrap it before use - even if logged, it's useless after unwrap
+resource "terraform_data" "wrapped_secret_id" {
+  # Re-generate on each apply to get fresh wrapped token
+  triggers_replace = timestamp()
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -s -X POST \
+        -H "X-Vault-Token: $VAULT_TOKEN" \
+        ${var.vault_namespace != "" ? "-H \"X-Vault-Namespace: ${var.vault_namespace}\"" : ""} \
+        -H "X-Vault-Wrap-TTL: 3h" \
+        "${var.vault_addr}/v1/auth/approle/role/promptops/secret-id" \
+        | jq -r '.wrap_info.token' > /tmp/wrapped_secret_id.txt
+    EOT
+  }
+}
+
+data "local_file" "wrapped_secret_id" {
+  filename   = "/tmp/wrapped_secret_id.txt"
+  depends_on = [terraform_data.wrapped_secret_id]
 }
 
 # -----------------------------------------------------------------------------
@@ -159,8 +178,8 @@ resource "vault_approle_auth_backend_role_secret_id" "promptops" {
 # -----------------------------------------------------------------------------
 
 locals {
-  vault_ca_public_key     = trimspace(data.http.vault_ca_public_key.response_body)
-  vault_approle_role_id   = vault_approle_auth_backend_role.promptops.role_id
-  vault_approle_secret_id = vault_approle_auth_backend_role_secret_id.promptops.secret_id
-  vault_ssh_role_name     = vault_ssh_secret_backend_role.promptops.name
+  vault_ca_public_key       = trimspace(data.http.vault_ca_public_key.response_body)
+  vault_approle_role_id     = vault_approle_auth_backend_role.promptops.role_id
+  vault_wrapped_secret_id   = trimspace(data.local_file.wrapped_secret_id.content)
+  vault_ssh_role_name       = vault_ssh_secret_backend_role.promptops.name
 }

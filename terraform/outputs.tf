@@ -77,27 +77,31 @@ output "vault_ssh_ca_configured" {
 }
 
 # -----------------------------------------------------------------------------
-# Vault AppRole Outputs (for AAP Credential Configuration)
+# Vault Outputs
 # -----------------------------------------------------------------------------
-
-output "vault_approle_role_id" {
-  description = "Vault AppRole role_id - use this in AAP Vault Secret Lookup credential"
-  value       = local.vault_approle_role_id
-}
-
-output "vault_approle_secret_id" {
-  description = "Vault AppRole secret_id - use this in AAP Vault Secret Lookup credential"
-  value       = local.vault_approle_secret_id
-  sensitive   = true
-}
 
 output "vault_ssh_role_name" {
   description = "Vault SSH role name for certificate issuance"
   value       = local.vault_ssh_role_name
 }
 
+output "vault_approle_role_id" {
+  description = "Vault AppRole role_id (passed to playbook)"
+  value       = local.vault_approle_role_id
+}
+
 # -----------------------------------------------------------------------------
-# AAP Outputs
+# AAP Notes
 # -----------------------------------------------------------------------------
-# Actions don't produce state, so there's no job status to output.
-# Use `terraform apply -invoke action.aap_job_launch.configure_vm` to re-run.
+# No AAP credential setup required!
+#
+# Terraform passes a WRAPPED secret_id to the playbook. The wrapped token is:
+#   - Single-use (invalidated after unwrap)
+#   - Time-limited (3 hour TTL)
+#   - Safe to log (useless after playbook unwraps it)
+#
+# The playbook unwraps the token to get the real secret_id, then authenticates
+# to Vault. No static secrets stored anywhere.
+#
+# To re-run the AAP job:
+#   terraform apply -invoke action.aap_job_launch.configure_vm

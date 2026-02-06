@@ -9,17 +9,18 @@
 #   Play 2 (target)    - SSH into VMs using Vault creds, install Streamlit
 #   Play 3 (localhost) - Shred ephemeral SSH credentials
 #
-# Variable sources:
-#   From Terraform extra_vars:
-#     - target_hosts            Comma-separated VM IP addresses
-#     - ssh_user                SSH username (default: ubuntu)
-#     - vault_addr              Vault server URL
-#     - vault_namespace         Vault Enterprise namespace (empty for OSS)
-#     - vault_ssh_role          Vault SSH CA role name
+# Variable sources (all from Terraform extra_vars):
+#     - target_hosts              Comma-separated VM IP addresses
+#     - ssh_user                  SSH username (default: ubuntu)
+#     - vault_addr                Vault server URL
+#     - vault_namespace           Vault Enterprise namespace (empty for OSS)
+#     - vault_ssh_role            Vault SSH CA role name
+#     - vault_approle_role_id     AppRole role ID
+#     - vault_wrapped_secret_id   WRAPPED secret_id (single-use, must unwrap first)
 #
-#   From AAP Vault credential lookup (injected by Job Template):
-#     - vault_approle_role_id   AppRole role ID
-#     - vault_approle_secret_id AppRole secret ID
+# Security: The wrapped_secret_id is a single-use token. Even if it appears in
+# logs, it's useless after the playbook unwraps it. The real secret_id is never
+# logged or stored.
 #
 # Prerequisites:
 #   - Vault SSH CA enabled (vault secrets enable ssh)
@@ -52,12 +53,12 @@
           - target_hosts | length > 0
           - vault_addr is defined
           - vault_approle_role_id is defined
-          - vault_approle_secret_id is defined
+          - vault_wrapped_secret_id is defined
           - vault_ssh_role is defined
         fail_msg: >-
           Missing required variables. Ensure Terraform passes target_hosts,
-          vault_addr, vault_ssh_role via extra_vars, and AAP injects
-          vault_approle_role_id + vault_approle_secret_id via credential lookup.
+          vault_addr, vault_ssh_role, vault_approle_role_id, and
+          vault_wrapped_secret_id via extra_vars.
 
     # Build Vault headers. X-Vault-Namespace is required for Vault Enterprise;
     # omitted (empty) for OSS Vault, which ignores unknown headers.
@@ -65,7 +66,23 @@
       ansible.builtin.set_fact:
         _vault_headers: "{{ {'X-Vault-Namespace': vault_namespace} if vault_namespace | default('') | length > 0 else {} }}"
 
-    # Step 1: Exchange AppRole role_id + secret_id for a Vault client token.
+    # Step 1: UNWRAP the wrapped secret_id to get the real secret_id
+    # This is a single-use operation - the wrapped token is invalidated after unwrap
+    - name: Unwrap the wrapped secret_id
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/sys/wrapping/unwrap"
+        method: POST
+        headers: "{{ _vault_headers | combine({'X-Vault-Token': vault_wrapped_secret_id}) }}"
+        status_code: 200
+      register: unwrap_result
+      no_log: true
+
+    - name: Extract unwrapped secret_id
+      ansible.builtin.set_fact:
+        _vault_secret_id: "{{ unwrap_result.json.data.secret_id }}"
+      no_log: true
+
+    # Step 2: Exchange AppRole role_id + unwrapped secret_id for a Vault client token.
     # The token is short-lived and scoped to the policy attached to the AppRole.
     - name: Authenticate to Vault via AppRole
       ansible.builtin.uri:
@@ -75,7 +92,7 @@
         body_format: json
         body:
           role_id: "{{ vault_approle_role_id }}"
-          secret_id: "{{ vault_approle_secret_id }}"
+          secret_id: "{{ _vault_secret_id }}"
         status_code: 200
       register: vault_login
       no_log: true
