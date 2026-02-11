@@ -14,7 +14,7 @@
 action "aap_job_launch" "configure_vm" {
   config {
     job_template_id     = var.aap_job_template_id
-    wait_for_completion = true
+    wait_for_completion = false
 
     extra_vars = jsonencode({
       # Target hosts - comma-separated list for multiple VMs

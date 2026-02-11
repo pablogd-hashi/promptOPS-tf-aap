@@ -39,25 +39,15 @@ resource "vault_mount" "ssh" {
   description = "SSH certificate signing for PromptOps"
 }
 
-# Check if CA already exists
-data "http" "vault_ca_check" {
-  url = "${var.vault_addr}/v1/ssh/public_key"
-
-  request_headers = var.vault_namespace != "" ? {
-    "X-Vault-Namespace" = var.vault_namespace
-  } : {}
-
-  depends_on = [vault_mount.ssh]
-}
-
-locals {
-  ca_exists = data.http.vault_ca_check.status_code == 200
-}
 
 resource "vault_ssh_secret_backend_ca" "ssh_ca" {
   backend              = "ssh"
-  generate_signing_key = true
-
+#  generate_signing_key = true
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = all
+  }
+  
   depends_on = [vault_mount.ssh]
 }
 

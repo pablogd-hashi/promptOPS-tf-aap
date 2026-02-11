@@ -119,33 +119,6 @@ This will log the full prompt to the console, show an "LLM Context" expandable p
 
 ### The Flow
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                                                                     │
-│  1. PromptOps reads terraform/variables.tf                          │
-│     PromptOps reads terraform/modules/*/variables.tf                │
-│                                                                     │
-│  2. Extracts ONLY:                                                  │
-│     - Variable names, types, descriptions                           │
-│     - Validation constraints (allowed values, ranges)               │
-│     - Non-sensitive defaults                                        │
-│                                                                     │
-│  3. Formats as text block, injects into system prompt               │
-│                                                                     │
-│  4. User asks: "Use a V100"                                         │
-│                                                                     │
-│  5. LLM sees constraints in prompt, responds:                       │
-│     "Not available. Platform only offers T4."                       │
-│                                                                     │
-│  6. If valid, LLM outputs JSON with variable values                 │
-│                                                                     │
-│  7. PromptOps writes terraform.tfvars                               │
-│                                                                     │
-│  8. Terraform applies and enforces (double-check)                   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
 The LLM never discovers anything on its own. It only knows what PromptOps explicitly pasted into the prompt.
 
 ## Module Structure
@@ -201,151 +174,11 @@ PromptOps orchestrates a complete infrastructure pipeline: from user intent to c
 
 ### Architecture Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              SINGLE TERRAFORM APPLY                              │
-└─────────────────────────────────────────────────────────────────────────────────┘
+![PromptOps Workflow](docs/images/promptops_workflow.png)
 
-     ┌──────────────┐
-     │   User       │
-     │  "I need a   │
-     │   GPU VM"    │
-     └──────┬───────┘
-            │
-            ▼
-     ┌──────────────┐      ┌──────────────┐
-     │  PromptOps   │─────▶│  terraform   │
-     │   (LLM)      │      │   .tfvars    │
-     └──────────────┘      └──────┬───────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                            TERRAFORM APPLY                                       │
-│                                                                                  │
-│  ┌─────────────────────────────────────────────────────────────────────────┐    │
-│  │ PHASE 1: Provision Vault (if not exists)                                │    │
-│  │                                                                         │    │
-│  │  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐            │    │
-│  │  │ SSH Secrets  │     │   AppRole    │     │    Policy    │            │    │
-│  │  │   Engine     │     │    Role      │     │ (ssh/issue)  │            │    │
-│  │  └──────────────┘     └──────────────┘     └──────────────┘            │    │
-│  │         │                    │                    │                     │    │
-│  │         └────────────────────┴────────────────────┘                     │    │
-│  │                              │                                          │    │
-│  │                              ▼                                          │    │
-│  │                    ┌──────────────────┐                                 │    │
-│  │                    │  Vault SSH CA    │                                 │    │
-│  │                    │  (generates CA   │                                 │    │
-│  │                    │   key pair)      │                                 │    │
-│  │                    └────────┬─────────┘                                 │    │
-│  │                             │ CA public key                             │    │
-│  └─────────────────────────────┼───────────────────────────────────────────┘    │
-│                                │                                                 │
-│  ┌─────────────────────────────┼───────────────────────────────────────────┐    │
-│  │ PHASE 2: Create VMs         │                                           │    │
-│  │                             ▼                                           │    │
-│  │  ┌──────────────────────────────────────────────────────┐              │    │
-│  │  │                    GCP Compute                        │              │    │
-│  │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐              │              │    │
-│  │  │  │  VM 1   │  │  VM 2   │  │  VM N   │              │              │    │
-│  │  │  │         │  │         │  │         │              │              │    │
-│  │  │  │ startup │  │ startup │  │ startup │◀─────────────┼──────────────┤    │
-│  │  │  │ script  │  │ script  │  │ script  │ (installs    │              │    │
-│  │  │  │         │  │         │  │         │  CA pub key) │              │    │
-│  │  │  └─────────┘  └─────────┘  └─────────┘              │              │    │
-│  │  │       │             │            │                   │              │    │
-│  │  │       └─────────────┴────────────┘                   │              │    │
-│  │  │                     │                                │              │    │
-│  │  └─────────────────────┼────────────────────────────────┘              │    │
-│  │                        │ VM IPs                                        │    │
-│  └────────────────────────┼───────────────────────────────────────────────┘    │
-│                           │                                                     │
-│  ┌────────────────────────┼───────────────────────────────────────────────┐    │
-│  │ PHASE 3: Trigger AAP   │                                               │    │
-│  │                        ▼                                               │    │
-│  │  ┌──────────────────────────────────────────────────────────────┐     │    │
-│  │  │              Terraform Action (after_create)                  │     │    │
-│  │  │                                                               │     │    │
-│  │  │  extra_vars = {                                               │     │    │
-│  │  │    target_hosts:           "10.0.1.5,10.0.1.6"               │     │    │
-│  │  │    ssh_user:               "ubuntu"                           │     │    │
-│  │  │    vault_addr:             "https://vault.example.com:8200"   │     │    │
-│  │  │    vault_namespace:        "admin"                            │     │    │
-│  │  │    vault_ssh_role:         "promptops"                        │     │    │
-│  │  │    vault_approle_role_id:  "abc123..."  ◀── from vault.tf    │     │    │
-│  │  │    vault_approle_secret_id: "xyz789..." ◀── from vault.tf    │     │    │
-│  │  │  }                                                            │     │    │
-│  │  └──────────────────────────────┬────────────────────────────────┘     │    │
-│  │                                 │                                       │    │
-│  └─────────────────────────────────┼───────────────────────────────────────┘    │
-│                                    │                                            │
-└────────────────────────────────────┼────────────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              AAP JOB EXECUTION                                   │
-│                                                                                  │
-│  ┌─────────────────────────────────────────────────────────────────────────┐    │
-│  │ PLAY 1: Get Ephemeral SSH Keys (localhost)                              │    │
-│  │                                                                         │    │
-│  │  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐            │    │
-│  │  │   AppRole    │────▶│    Vault     │────▶│  /ssh/issue  │            │    │
-│  │  │    Login     │     │   Auth OK    │     │   endpoint   │            │    │
-│  │  └──────────────┘     └──────────────┘     └──────┬───────┘            │    │
-│  │                                                   │                     │    │
-│  │                       ┌───────────────────────────┘                     │    │
-│  │                       │                                                 │    │
-│  │                       ▼                                                 │    │
-│  │            ┌─────────────────────┐                                      │    │
-│  │            │  Vault generates:   │                                      │    │
-│  │            │  - Private key      │  (ephemeral, 30min TTL)              │    │
-│  │            │  - Signed cert      │                                      │    │
-│  │            └─────────────────────┘                                      │    │
-│  │                       │                                                 │    │
-│  │                       ▼                                                 │    │
-│  │            ┌─────────────────────┐                                      │    │
-│  │            │  Write to temp dir  │                                      │    │
-│  │            │  /tmp/vault-ssh-*   │                                      │    │
-│  │            └─────────────────────┘                                      │    │
-│  └─────────────────────────────────────────────────────────────────────────┘    │
-│                                                                                  │
-│  ┌─────────────────────────────────────────────────────────────────────────┐    │
-│  │ PLAY 2: Configure VMs (target hosts)                                    │    │
-│  │                                                                         │    │
-│  │  ┌──────────────┐         ┌──────────────┐         ┌──────────────┐    │    │
-│  │  │     AAP      │──SSH───▶│    VM 1      │         │    VM N      │    │    │
-│  │  │  (with cert) │         │              │   ...   │              │    │    │
-│  │  └──────────────┘         │  - Install   │         │  - Install   │    │    │
-│  │         │                 │    packages  │         │    packages  │    │    │
-│  │         │                 │  - Deploy    │         │  - Deploy    │    │    │
-│  │         │                 │    Streamlit │         │    Streamlit │    │    │
-│  │         │                 └──────────────┘         └──────────────┘    │    │
-│  │         │                        ▲                        ▲            │    │
-│  │         │                        │                        │            │    │
-│  │         └────────────────────────┴────────────────────────┘            │    │
-│  │                    SSH with Vault-signed certificate                    │    │
-│  │                    (VM trusts CA, no static keys needed)                │    │
-│  └─────────────────────────────────────────────────────────────────────────┘    │
-│                                                                                  │
-│  ┌─────────────────────────────────────────────────────────────────────────┐    │
-│  │ PLAY 3: Cleanup (localhost)                                             │    │
-│  │                                                                         │    │
-│  │  shred -u /tmp/vault-ssh-*/id_rsa   (secure delete private keys)       │    │
-│  │  rm -rf /tmp/vault-ssh-*                                                │    │
-│  └─────────────────────────────────────────────────────────────────────────┘    │
-│                                                                                  │
-└─────────────────────────────────────────────────────────────────────────────────┘
+### End-to-End Flow
 
-                                     │
-                                     ▼
-                          ┌──────────────────┐
-                          │     SUCCESS      │
-                          │                  │
-                          │  VMs configured  │
-                          │  No static keys  │
-                          │  Full audit log  │
-                          └──────────────────┘
-```
+![End-to-End Flow](docs/images/end-to-end-flow.png)
 
 ### The Complete Flow
 
@@ -382,37 +215,7 @@ PromptOps orchestrates a complete infrastructure pipeline: from user intent to c
 
 ### Security Model
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    ZERO STATIC KEYS                              │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  Traditional SSH:                                                │
-│  ┌─────────┐    static key    ┌─────────┐                       │
-│  │   AAP   │─────────────────▶│   VM    │                       │
-│  └─────────┘   (stored in     └─────────┘                       │
-│                 AAP forever)                                     │
-│                                                                  │
-│  ────────────────────────────────────────────────────────────── │
-│                                                                  │
-│  Vault SSH CA:                                                   │
-│  ┌─────────┐    ┌─────────┐    ┌─────────┐                      │
-│  │   AAP   │───▶│  Vault  │───▶│   VM    │                      │
-│  └─────────┘    └─────────┘    └─────────┘                      │
-│       │              │              │                            │
-│       │         generates      validates                         │
-│       │         ephemeral      against                           │
-│       │         key + cert     CA pubkey                         │
-│       │              │              │                            │
-│       │              ▼              │                            │
-│       │     ┌─────────────────┐    │                            │
-│       └────▶│  30-min TTL     │────┘                            │
-│             │  auto-expires   │                                  │
-│             │  audit logged   │                                  │
-│             └─────────────────┘                                  │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
+**Zero Static Keys** - Traditional SSH stores static keys in AAP forever. With Vault SSH CA, ephemeral keys are generated on-demand with 30-minute TTL, auto-expire, and are fully audit logged.
 
 ### AAP Setup (One-Time)
 

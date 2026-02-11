@@ -27,6 +27,7 @@ terraform/.terraform.lock.hcl
 terraform/terraform.tfvars
 terraform/terraform.tfstate
 terraform/terraform.tfstate.backup
+terraform/terraform.tfstate.*.backup
 terraform/*.tfplan
 
 # Ansible
@@ -59,6 +60,7 @@ promptops/**/*.egg-info/
 # Credentials and secrets (NEVER COMMIT)
 *.pem
 *.key
+*.pub
 *_key.json
 .env
 .env.local
